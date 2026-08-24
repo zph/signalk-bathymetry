@@ -66,9 +66,9 @@ export class TileRenderer {
         changedPolygons.push(polygon)
       }
     }
-    // All fills are painted before the perimeter. Adjacent hexes therefore become
-    // one surveyed swath with no artificial internal grid line.
-    paintOuterBoundary(rgba, [25, 35, 45, 190])
+    // All fills are painted before the perimeter. Stroke only exposed geometric
+    // edges so adjacent hexes remain one swath and diagonals are anti-aliased.
+    paintOuterHexBoundary(rgba, cells, bounds, this.config.baseCellMeters, [25, 35, 45, 190])
     for (const polygon of changedPolygons) paintPolygonBorder(rgba, polygon, [220, 0, 170, 225])
 
     let labelCount = 0
@@ -285,24 +285,34 @@ function pointInPolygon(x: number, y: number, polygon: readonly PixelPoint[]): b
   return inside
 }
 
-/** Outline only the exposed perimeter of all painted hexes, never their shared edges. */
-function paintOuterBoundary(rgba: Uint8Array, color: Rgba): void {
-  const occupied = new Uint8Array(TILE_SIZE * TILE_SIZE)
-  for (let pixel = 0; pixel < occupied.length; pixel += 1) {
-    occupied[pixel] = rgba[pixel * 4 + 3]! > 0 ? 1 : 0
-  }
-  for (let y = 1; y < TILE_SIZE - 1; y += 1) {
-    for (let x = 1; x < TILE_SIZE - 1; x += 1) {
-      const pixel = y * TILE_SIZE + x
-      if (
-        occupied[pixel] &&
-        (!occupied[pixel - 1] ||
-          !occupied[pixel + 1] ||
-          !occupied[pixel - TILE_SIZE] ||
-          !occupied[pixel + TILE_SIZE])
-      ) {
-        setPixel(rgba, x, y, color)
-      }
+const EDGE_NEIGHBORS: ReadonlyArray<readonly [number, number]> = [
+  [0, 1],
+  [-1, 1],
+  [-1, 0],
+  [0, -1],
+  [1, -1],
+  [1, 0]
+]
+
+/** Stroke only the geometric perimeter of the measured swath, never shared edges. */
+function paintOuterHexBoundary(
+  rgba: Uint8Array,
+  cells: readonly SurfaceCell[],
+  bounds: ReturnType<typeof tileMercatorBounds>,
+  cellMeters: number,
+  color: Rgba
+): void {
+  const occupied = new Set(cells.map((cell) => `${cell.cellX}:${cell.cellY}`))
+  const span = bounds.maxX - bounds.minX
+  for (const cell of cells) {
+    const polygon = hexCellVertices(cell.cellX, cell.cellY, cellMeters).map((vertex) => ({
+      x: ((vertex.x - bounds.minX) / span) * TILE_SIZE,
+      y: ((bounds.maxY - vertex.y) / span) * TILE_SIZE
+    }))
+    for (let edge = 0; edge < polygon.length; edge += 1) {
+      const neighbor = EDGE_NEIGHBORS[edge]!
+      if (occupied.has(`${cell.cellX + neighbor[0]}:${cell.cellY + neighbor[1]}`)) continue
+      paintAntialiasedLine(rgba, polygon[edge]!, polygon[(edge + 1) % polygon.length]!, color)
     }
   }
 }
@@ -311,33 +321,66 @@ function paintPolygonBorder(rgba: Uint8Array, polygon: readonly PixelPoint[], co
   for (let index = 0; index < polygon.length; index += 1) {
     const start = polygon[index]!
     const end = polygon[(index + 1) % polygon.length]!
-    paintLine(rgba, start, end, color)
+    paintAntialiasedLine(rgba, start, end, color)
   }
 }
 
-function paintLine(rgba: Uint8Array, start: PixelPoint, end: PixelPoint, color: Rgba): void {
-  let x = Math.round(start.x)
-  let y = Math.round(start.y)
-  const targetX = Math.round(end.x)
-  const targetY = Math.round(end.y)
-  const differenceX = Math.abs(targetX - x)
-  const differenceY = -Math.abs(targetY - y)
-  const stepX = x < targetX ? 1 : -1
-  const stepY = y < targetY ? 1 : -1
-  let error = differenceX + differenceY
-  while (true) {
-    setPixel(rgba, x, y, color)
-    if (x === targetX && y === targetY) return
-    const doubled = 2 * error
-    if (doubled >= differenceY) {
-      error += differenceY
-      x += stepX
-    }
-    if (doubled <= differenceX) {
-      error += differenceX
-      y += stepY
+function paintAntialiasedLine(
+  rgba: Uint8Array,
+  start: PixelPoint,
+  end: PixelPoint,
+  color: Rgba
+): void {
+  const minX = Math.floor(Math.min(start.x, end.x) - 1)
+  const maxX = Math.ceil(Math.max(start.x, end.x) + 1)
+  const minY = Math.floor(Math.min(start.y, end.y) - 1)
+  const maxY = Math.ceil(Math.max(start.y, end.y) + 1)
+  const deltaX = end.x - start.x
+  const deltaY = end.y - start.y
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY
+  if (lengthSquared === 0) return
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const pixelX = x + 0.5
+      const pixelY = y + 0.5
+      const projection = Math.max(
+        0,
+        Math.min(
+          1,
+          ((pixelX - start.x) * deltaX + (pixelY - start.y) * deltaY) / lengthSquared
+        )
+      )
+      const nearestX = start.x + projection * deltaX
+      const nearestY = start.y + projection * deltaY
+      const distance = Math.hypot(pixelX - nearestX, pixelY - nearestY)
+      const coverage = Math.max(0, Math.min(1, 1 - distance))
+      if (coverage > 0) blendPixel(rgba, x, y, color, coverage)
     }
   }
+}
+
+function blendPixel(
+  rgba: Uint8Array,
+  x: number,
+  y: number,
+  color: Rgba,
+  coverage: number
+): void {
+  if (x < 0 || x >= TILE_SIZE || y < 0 || y >= TILE_SIZE) return
+  const index = (y * TILE_SIZE + x) * 4
+  const sourceAlpha = (color[3] / 255) * coverage
+  const destinationAlpha = rgba[index + 3]! / 255
+  const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha)
+  if (outputAlpha <= 0) return
+  for (let channel = 0; channel < 3; channel += 1) {
+    rgba[index + channel] = Math.round(
+      (color[channel]! * sourceAlpha +
+        rgba[index + channel]! * destinationAlpha * (1 - sourceAlpha)) /
+        outputAlpha
+    )
+  }
+  rgba[index + 3] = Math.round(outputAlpha * 255)
 }
 
 const FONT: Readonly<Record<string, readonly string[]>> = {

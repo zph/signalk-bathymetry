@@ -96,7 +96,8 @@ depth in the tide-adjusted layer. Labels use clean contrast-aware digits without
 an outline, grow with zoom, and continue across XYZ tile seams without clipping.
 Depths below 10 display units retain the configured decimal precision; depths
 of 10 or more omit decimals. All labels round down so they never overstate depth.
-Gray stippling marks lower confidence and
+The measured swath perimeter and change outlines use anti-aliased geometric
+strokes rather than pixel-traced borders. Gray stippling marks lower confidence and
 magenta cell borders mark a suspected or confirmed change.
 
 The plugin reads Signal K's resolved `depth` unit preference once after startup,

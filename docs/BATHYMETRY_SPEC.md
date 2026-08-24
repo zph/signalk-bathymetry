@@ -590,7 +590,8 @@ The initial raster surface uses pointy-top metric hexagons. Edge-adjacent cells
 are visually dissolved into a continuous surveyed swath: each cell retains its
 own depth/confidence fill and optional centered depth label, but normal shared
 edges are not stroked. Only the exposed perimeter of a measured region is
-outlined. Magenta change-state outlines remain cell-specific because they are
+outlined with anti-aliased geometric strokes. Magenta change-state outlines
+remain cell-specific and anti-aliased because they are
 safety signals. Depth labels are enabled independently and appear only above a
 configured minimum zoom; they show conservative datum depth in chart-datum mode
 and conservative tide-projected water depth in tide-adjusted mode. The raster
