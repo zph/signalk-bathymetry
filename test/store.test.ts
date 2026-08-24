@@ -93,3 +93,27 @@ test('a shallow contradiction is shown immediately but promoted only after indep
   const quarantined = store.listSoundings({ qcState: 'quarantined', limit: 10 })
   assert.equal(quarantined.length, 3)
 })
+
+test('grid changes remap retained raw evidence and rebuild derived cells', (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-migration-test-'))
+  const databasePath = join(directory, 'test.sqlite')
+  const coarseConfig = normalizeConfig({ baseCellMeters: 10 })
+  const input = sounding(coarseConfig, { rawDepthM: 7.25, datumDepthM: 6.75 })
+  let store = new BathymetryStore(databasePath, coarseConfig)
+  store.ingest([input])
+  const before = store.listSoundings({ limit: 10 })
+  store.close()
+
+  const fineConfig = normalizeConfig({ baseCellMeters: 5 })
+  store = new BathymetryStore(databasePath, fineConfig)
+  t.after(() => {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const after = store.listSoundings({ limit: 10 })
+  assert.equal(after.length, before.length)
+  assert.equal(after[0]?.rawDepthM, 7.25)
+  assert.equal(after[0]?.datumDepthM, 6.75)
+  assert.equal(store.stats().soundings, 1)
+  assert.ok(store.lookupCell(input.latitude, input.longitude, fineConfig.targetDatum))
+})

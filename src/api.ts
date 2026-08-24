@@ -11,7 +11,7 @@ import {
 import type { CaptureEngine } from './capture'
 import type { HistoryBackfill } from './history-backfill'
 import type { AutoBackfill } from './auto-backfill'
-import type { BathymetryConfig, QcState } from './types'
+import type { BathymetryConfig, QcState, SurfaceCell } from './types'
 
 const EMPTY_TILE = encodeRgbaPng(256, 256, new Uint8Array(256 * 256 * 4))
 const TILE_LAYERS = new Set<TileLayer>(['depth', 'confidence', 'age', 'change'])
@@ -77,7 +77,8 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       response.json({
         datum: runtime.config.targetDatum,
         cellSizeM: runtime.config.baseCellMeters,
-        cells: cells.map((cell) => ({ ...cell, bounds: runtime.store.cellBounds(cell) }))
+        grid: 'hex-pointy',
+        cells: cells.map((cell) => cellResponse(runtime.store, cell))
       })
     } catch (error) {
       sendError(response, error)
@@ -92,7 +93,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const longitude = numberQuery(request, 'longitude', -180, 180)
       const cell = runtime.store.lookupCell(latitude, longitude, runtime.config.targetDatum)
       if (!cell) throw new HttpError(404, 'No bathymetry cell covers this position')
-      response.json({ ...cell, bounds: runtime.store.cellBounds(cell) })
+      response.json(cellResponse(runtime.store, cell))
     } catch (error) {
       sendError(response, error)
     }
@@ -108,7 +109,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
         runtime.config.targetDatum,
         integerQuery(request, 'limit', 1000, 1, 10_000)
       )
-      response.json({ cells: cells.map((cell) => ({ ...cell, bounds: runtime.store.cellBounds(cell) })) })
+      response.json({ cells: cells.map((cell) => cellResponse(runtime.store, cell)) })
     } catch (error) {
       sendError(response, error)
     }
@@ -151,7 +152,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
       const atMs = optionalTime(request, 'at') ?? Date.now()
       const tideBucket = mode === 'water' ? Math.floor(atMs / 60_000) : 0
-      const etag = `W/\"${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}\"`
+      const etag = `W/\"hex3-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelMinZoom}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
@@ -161,6 +162,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       response.set('Cache-Control', mode === 'water' ? 'private, max-age=30' : 'private, max-age=300')
       response.set('ETag', etag)
       response.set('X-Bathymetry-Cell-Count', String(rendered.cellCount))
+      response.set('X-Bathymetry-Label-Count', String(rendered.labelCount))
       if (rendered.projection) {
         response.set('X-Bathymetry-Tide-Meters', String(rendered.projection.heightM))
       }
@@ -207,7 +209,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.1.2' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.2.0' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
@@ -246,8 +248,21 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     dangerUnderKeelM: config.dangerUnderKeelM,
     recencyHalfLifeDays: config.recencyHalfLifeDays,
     overlayOpacity: config.overlayOpacity,
+    showDepthLabels: config.showDepthLabels,
+    depthLabelMinZoom: config.depthLabelMinZoom,
     autoBackfillWhenEmpty: config.autoBackfillWhenEmpty,
     autoBackfillDays: config.autoBackfillDays
+  }
+}
+
+function cellResponse(store: BathymetryStore, cell: SurfaceCell): Record<string, unknown> {
+  return {
+    ...cell,
+    bounds: store.cellBounds(cell),
+    geometry: {
+      type: 'Polygon',
+      coordinates: [store.cellPolygon(cell)]
+    }
   }
 }
 

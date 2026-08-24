@@ -34,7 +34,59 @@ export function mercatorToLonLat(x: number, y: number): Position {
 
 export function cellForPosition(position: Position, cellMeters: number): { x: number; y: number } {
   const mercator = lonLatToMercator(position)
-  return { x: Math.floor(mercator.x / cellMeters), y: Math.floor(mercator.y / cellMeters) }
+  return hexCellForMercator(mercator.x, mercator.y, cellMeters)
+}
+
+/** Pointy-top axial hex coordinates. cellMeters is the flat-to-flat width. */
+export function hexCellForMercator(
+  mercatorX: number,
+  mercatorY: number,
+  cellMeters: number
+): { x: number; y: number } {
+  const fractionalX = mercatorX / cellMeters - mercatorY / (Math.sqrt(3) * cellMeters)
+  const fractionalY = (2 * mercatorY) / (Math.sqrt(3) * cellMeters)
+  return roundAxial(fractionalX, fractionalY)
+}
+
+export function hexCellCenter(
+  cellX: number,
+  cellY: number,
+  cellMeters: number
+): { x: number; y: number } {
+  return {
+    x: cellMeters * (cellX + cellY / 2),
+    y: cellMeters * (Math.sqrt(3) / 2) * cellY
+  }
+}
+
+export function hexCellVertices(
+  cellX: number,
+  cellY: number,
+  cellMeters: number
+): Array<{ x: number; y: number }> {
+  const center = hexCellCenter(cellX, cellY, cellMeters)
+  const radius = cellMeters / Math.sqrt(3)
+  return Array.from({ length: 6 }, (_, index) => {
+    const angle = ((30 + index * 60) * Math.PI) / 180
+    return {
+      x: center.x + radius * Math.cos(angle),
+      y: center.y + radius * Math.sin(angle)
+    }
+  })
+}
+
+export function hexCellMercatorBounds(
+  cellX: number,
+  cellY: number,
+  cellMeters: number
+): MercatorBounds {
+  const vertices = hexCellVertices(cellX, cellY, cellMeters)
+  return {
+    minX: Math.min(...vertices.map((point) => point.x)),
+    minY: Math.min(...vertices.map((point) => point.y)),
+    maxX: Math.max(...vertices.map((point) => point.x)),
+    maxY: Math.max(...vertices.map((point) => point.y))
+  }
 }
 
 export interface MercatorBounds {
@@ -56,12 +108,45 @@ export function bboxToCellRange(
   bounds: MercatorBounds,
   cellMeters: number
 ): { minCellX: number; minCellY: number; maxCellX: number; maxCellY: number } {
+  const corners = [
+    fractionalAxial(bounds.minX, bounds.minY, cellMeters),
+    fractionalAxial(bounds.minX, bounds.maxY, cellMeters),
+    fractionalAxial(bounds.maxX, bounds.minY, cellMeters),
+    fractionalAxial(bounds.maxX, bounds.maxY, cellMeters)
+  ]
   return {
-    minCellX: Math.floor(bounds.minX / cellMeters),
-    minCellY: Math.floor(bounds.minY / cellMeters),
-    maxCellX: Math.floor(bounds.maxX / cellMeters),
-    maxCellY: Math.floor(bounds.maxY / cellMeters)
+    minCellX: Math.floor(Math.min(...corners.map((point) => point.x))) - 2,
+    minCellY: Math.floor(Math.min(...corners.map((point) => point.y))) - 2,
+    maxCellX: Math.ceil(Math.max(...corners.map((point) => point.x))) + 2,
+    maxCellY: Math.ceil(Math.max(...corners.map((point) => point.y))) + 2
   }
+}
+
+function fractionalAxial(
+  mercatorX: number,
+  mercatorY: number,
+  cellMeters: number
+): { x: number; y: number } {
+  return {
+    x: mercatorX / cellMeters - mercatorY / (Math.sqrt(3) * cellMeters),
+    y: (2 * mercatorY) / (Math.sqrt(3) * cellMeters)
+  }
+}
+
+function roundAxial(x: number, y: number): { x: number; y: number } {
+  const cubeX = x
+  const cubeZ = y
+  const cubeY = -cubeX - cubeZ
+  let roundedX = Math.round(cubeX)
+  let roundedY = Math.round(cubeY)
+  let roundedZ = Math.round(cubeZ)
+  const xDifference = Math.abs(roundedX - cubeX)
+  const yDifference = Math.abs(roundedY - cubeY)
+  const zDifference = Math.abs(roundedZ - cubeZ)
+  if (xDifference > yDifference && xDifference > zDifference) roundedX = -roundedY - roundedZ
+  else if (yDifference > zDifference) roundedY = -roundedX - roundedZ
+  else roundedZ = -roundedX - roundedY
+  return { x: roundedX, y: roundedZ }
 }
 
 function radians(degrees: number): number {

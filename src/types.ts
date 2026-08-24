@@ -48,6 +48,8 @@ export interface BathymetryConfig {
   changeMinimumPasses: number
   changeMinimumDays: number
   overlayOpacity: number
+  showDepthLabels: boolean
+  depthLabelMinZoom: number
   minZoom: number
   maxZoom: number
   batchSize: number

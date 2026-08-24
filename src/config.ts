@@ -29,6 +29,8 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   changeMinimumPasses: 3,
   changeMinimumDays: 2,
   overlayOpacity: 0.55,
+  showDepthLabels: true,
+  depthLabelMinZoom: 19,
   minZoom: 8,
   maxZoom: 20,
   batchSize: 20,
@@ -59,6 +61,11 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     DEFAULT_CONFIG.dangerUnderKeelM
   )
   config.overlayOpacity = clamp(config.overlayOpacity, 0, 1)
+  config.showDepthLabels =
+    typeof config.showDepthLabels === 'boolean'
+      ? config.showDepthLabels
+      : DEFAULT_CONFIG.showDepthLabels
+  config.depthLabelMinZoom = Math.round(clamp(config.depthLabelMinZoom, 0, 24))
   config.minZoom = Math.round(clamp(config.minZoom, 0, 22))
   config.maxZoom = Math.round(clamp(config.maxZoom, config.minZoom, 24))
   config.baseCellMeters = positive(config.baseCellMeters, DEFAULT_CONFIG.baseCellMeters)
@@ -169,6 +176,12 @@ export function pluginSchema(): object {
       ),
       recencyHalfLifeDays: numberField('Confidence half-life (days)', 1, 36500, 1, 365),
       overlayOpacity: numberField('Freeboard overlay opacity', 0, 1, 0.05, 0.55),
+      showDepthLabels: {
+        type: 'boolean',
+        title: 'Show depth numbers inside hex cells at high zoom',
+        default: true
+      },
+      depthLabelMinZoom: numberField('Minimum zoom for depth numbers', 0, 24, 1, 19),
       instrumentMinM: numberField('Sounder minimum valid depth (m)', 0, 100, 0.1, 0.4),
       instrumentMaxM: numberField('Sounder maximum valid depth (m)', 1, 12000, 1, 120),
       historyProvider: {

@@ -1,4 +1,4 @@
-import { bboxToCellRange, tileMercatorBounds } from './geo'
+import { bboxToCellRange, hexCellCenter, hexCellVertices, tileMercatorBounds } from './geo'
 import { encodeRgbaPng } from './png'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
@@ -13,6 +13,7 @@ export class ProjectionUnavailableError extends Error {}
 export interface RenderedTile {
   png: Buffer
   cellCount: number
+  labelCount: number
   projection?: TideProjection
 }
 
@@ -33,7 +34,7 @@ export class TileRenderer {
   }): RenderedTile {
     const rgba = new Uint8Array(TILE_SIZE * TILE_SIZE * 4)
     if (options.z < this.config.minZoom || options.z > this.config.maxZoom) {
-      return { png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba), cellCount: 0 }
+      return { png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba), cellCount: 0, labelCount: 0 }
     }
     const bounds = tileMercatorBounds(options.z, options.x, options.y)
     const range = bboxToCellRange(bounds, this.config.baseCellMeters)
@@ -56,10 +57,32 @@ export class TileRenderer {
         )
       }
     }
-    for (const cell of cells) this.paintCell(rgba, cell, bounds, options, projection)
+    const changedPolygons: PixelPoint[][] = []
+    for (const cell of cells) {
+      const polygon = this.paintCell(rgba, cell, bounds, options, projection)
+      if (polygon && options.layer === 'depth' && cell.changeState !== 'stable') {
+        changedPolygons.push(polygon)
+      }
+    }
+    // All fills are painted before the perimeter. Adjacent hexes therefore become
+    // one surveyed swath with no artificial internal grid line.
+    paintOuterBoundary(rgba, [25, 35, 45, 190])
+    for (const polygon of changedPolygons) paintPolygonBorder(rgba, polygon, [220, 0, 170, 225])
+
+    let labelCount = 0
+    if (
+      options.layer === 'depth' &&
+      this.config.showDepthLabels &&
+      options.z >= this.config.depthLabelMinZoom
+    ) {
+      for (const cell of cells) {
+        if (this.paintDepthLabel(rgba, cell, bounds, options, projection)) labelCount += 1
+      }
+    }
     const result: RenderedTile = {
       png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba),
-      cellCount: cells.length
+      cellCount: cells.length,
+      labelCount
     }
     if (projection) result.projection = projection
     return result
@@ -71,21 +94,24 @@ export class TileRenderer {
     bounds: ReturnType<typeof tileMercatorBounds>,
     options: { layer: TileLayer; mode: DepthMode; atMs: number },
     projection: TideProjection | undefined
-  ): void {
+  ): PixelPoint[] | undefined {
     const span = bounds.maxX - bounds.minX
-    const cellMinX = cell.cellX * this.config.baseCellMeters
-    const cellMaxX = cellMinX + this.config.baseCellMeters
-    const cellMinY = cell.cellY * this.config.baseCellMeters
-    const cellMaxY = cellMinY + this.config.baseCellMeters
-    const left = clampPixel(Math.floor(((cellMinX - bounds.minX) / span) * TILE_SIZE))
-    const right = clampPixel(Math.ceil(((cellMaxX - bounds.minX) / span) * TILE_SIZE))
-    const top = clampPixel(Math.floor(((bounds.maxY - cellMaxY) / span) * TILE_SIZE))
-    const bottom = clampPixel(Math.ceil(((bounds.maxY - cellMinY) / span) * TILE_SIZE))
-    if (right <= left || bottom <= top) return
+    const polygon = hexCellVertices(cell.cellX, cell.cellY, this.config.baseCellMeters).map(
+      (vertex) => ({
+        x: ((vertex.x - bounds.minX) / span) * TILE_SIZE,
+        y: ((bounds.maxY - vertex.y) / span) * TILE_SIZE
+      })
+    )
+    const left = clampPixel(Math.floor(Math.min(...polygon.map((point) => point.x))))
+    const right = clampPixel(Math.ceil(Math.max(...polygon.map((point) => point.x))))
+    const top = clampPixel(Math.floor(Math.min(...polygon.map((point) => point.y))))
+    const bottom = clampPixel(Math.ceil(Math.max(...polygon.map((point) => point.y))))
+    if (right <= left || bottom <= top) return undefined
 
     const color = this.colorForCell(cell, options, projection)
     for (let y = top; y < bottom; y += 1) {
       for (let x = left; x < right; x += 1) {
+        if (!pointInPolygon(x + 0.5, y + 0.5, polygon)) continue
         const index = (y * TILE_SIZE + x) * 4
         let pixel = color
         if (options.layer === 'depth' && cell.confidence < 0.55 && (x + y) % 7 < 2) {
@@ -97,9 +123,35 @@ export class TileRenderer {
         rgba[index + 3] = pixel[3]
       }
     }
-    if (cell.changeState !== 'stable' && options.layer === 'depth') {
-      paintBorder(rgba, left, top, right, bottom, [220, 0, 170, 225])
-    }
+    return polygon
+  }
+
+  private paintDepthLabel(
+    rgba: Uint8Array,
+    cell: SurfaceCell,
+    bounds: ReturnType<typeof tileMercatorBounds>,
+    options: { z: number; mode: DepthMode },
+    projection: TideProjection | undefined
+  ): boolean {
+    const center = hexCellCenter(cell.cellX, cell.cellY, this.config.baseCellMeters)
+    const span = bounds.maxX - bounds.minX
+    const centerX = ((center.x - bounds.minX) / span) * TILE_SIZE
+    const centerY = ((bounds.maxY - center.y) / span) * TILE_SIZE
+    if (centerX < 0 || centerX >= TILE_SIZE || centerY < 0 || centerY >= TILE_SIZE) return false
+
+    const combinedSigma = projection
+      ? Math.sqrt(cell.verticalSigmaM ** 2 + projection.sigmaM ** 2)
+      : cell.verticalSigmaM
+    const depthM = projection
+      ? cell.renderDepthM + projection.heightM - 1.645 * combinedSigma
+      : cell.conservativeDepthM
+    const text = formatDepth(depthM)
+    const scale = options.z >= this.config.depthLabelMinZoom + 1 ? 2 : 1
+    const labelWidth = (text.length * 4 - 1) * scale
+    const availableWidth = (this.config.baseCellMeters / span) * TILE_SIZE
+    if (labelWidth + 4 * scale > availableWidth) return false
+    paintBitmapText(rgba, text, Math.round(centerX), Math.round(centerY), scale)
+    return true
   }
 
   private colorForCell(
@@ -195,22 +247,134 @@ function interpolateStops(value: number, stops: readonly ColorStop[]): Rgb {
   return last[1]
 }
 
-function paintBorder(
+interface PixelPoint {
+  x: number
+  y: number
+}
+
+function pointInPolygon(x: number, y: number, polygon: readonly PixelPoint[]): boolean {
+  let inside = false
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const a = polygon[index]!
+    const b = polygon[previous]!
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+/** Outline only the exposed perimeter of all painted hexes, never their shared edges. */
+function paintOuterBoundary(rgba: Uint8Array, color: Rgba): void {
+  const occupied = new Uint8Array(TILE_SIZE * TILE_SIZE)
+  for (let pixel = 0; pixel < occupied.length; pixel += 1) {
+    occupied[pixel] = rgba[pixel * 4 + 3]! > 0 ? 1 : 0
+  }
+  for (let y = 1; y < TILE_SIZE - 1; y += 1) {
+    for (let x = 1; x < TILE_SIZE - 1; x += 1) {
+      const pixel = y * TILE_SIZE + x
+      if (
+        occupied[pixel] &&
+        (!occupied[pixel - 1] ||
+          !occupied[pixel + 1] ||
+          !occupied[pixel - TILE_SIZE] ||
+          !occupied[pixel + TILE_SIZE])
+      ) {
+        setPixel(rgba, x, y, color)
+      }
+    }
+  }
+}
+
+function paintPolygonBorder(rgba: Uint8Array, polygon: readonly PixelPoint[], color: Rgba): void {
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index]!
+    const end = polygon[(index + 1) % polygon.length]!
+    paintLine(rgba, start, end, color)
+  }
+}
+
+function paintLine(rgba: Uint8Array, start: PixelPoint, end: PixelPoint, color: Rgba): void {
+  let x = Math.round(start.x)
+  let y = Math.round(start.y)
+  const targetX = Math.round(end.x)
+  const targetY = Math.round(end.y)
+  const differenceX = Math.abs(targetX - x)
+  const differenceY = -Math.abs(targetY - y)
+  const stepX = x < targetX ? 1 : -1
+  const stepY = y < targetY ? 1 : -1
+  let error = differenceX + differenceY
+  while (true) {
+    setPixel(rgba, x, y, color)
+    if (x === targetX && y === targetY) return
+    const doubled = 2 * error
+    if (doubled >= differenceY) {
+      error += differenceY
+      x += stepX
+    }
+    if (doubled <= differenceX) {
+      error += differenceX
+      y += stepY
+    }
+  }
+}
+
+const FONT: Readonly<Record<string, readonly string[]>> = {
+  '0': ['111', '101', '101', '101', '111'],
+  '1': ['010', '110', '010', '010', '111'],
+  '2': ['111', '001', '111', '100', '111'],
+  '3': ['111', '001', '111', '001', '111'],
+  '4': ['101', '101', '111', '001', '001'],
+  '5': ['111', '100', '111', '001', '111'],
+  '6': ['111', '100', '111', '101', '111'],
+  '7': ['111', '001', '010', '010', '010'],
+  '8': ['111', '101', '111', '101', '111'],
+  '9': ['111', '101', '111', '001', '111'],
+  '.': ['000', '000', '000', '000', '010'],
+  '-': ['000', '000', '111', '000', '000']
+}
+
+function formatDepth(depthM: number): string {
+  return Math.abs(depthM) < 100 ? depthM.toFixed(1) : String(Math.round(depthM))
+}
+
+function paintBitmapText(
   rgba: Uint8Array,
-  left: number,
-  top: number,
-  right: number,
-  bottom: number,
-  color: Rgba
+  text: string,
+  centerX: number,
+  centerY: number,
+  scale: number
 ): void {
-  for (let x = left; x < right; x += 1) {
-    setPixel(rgba, x, top, color)
-    setPixel(rgba, x, bottom - 1, color)
+  const width = (text.length * 4 - 1) * scale
+  const height = 5 * scale
+  const left = Math.round(centerX - width / 2)
+  const top = Math.round(centerY - height / 2)
+  const foreground: Array<[number, number]> = []
+  for (let characterIndex = 0; characterIndex < text.length; characterIndex += 1) {
+    const glyph = FONT[text[characterIndex]!]
+    if (!glyph) continue
+    for (let row = 0; row < glyph.length; row += 1) {
+      for (let column = 0; column < 3; column += 1) {
+        if (glyph[row]![column] !== '1') continue
+        for (let offsetY = 0; offsetY < scale; offsetY += 1) {
+          for (let offsetX = 0; offsetX < scale; offsetX += 1) {
+            foreground.push([
+              left + (characterIndex * 4 + column) * scale + offsetX,
+              top + row * scale + offsetY
+            ])
+          }
+        }
+      }
+    }
   }
-  for (let y = top; y < bottom; y += 1) {
-    setPixel(rgba, left, y, color)
-    setPixel(rgba, right - 1, y, color)
+  for (const [x, y] of foreground) {
+    for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        setPixel(rgba, x + offsetX, y + offsetY, [10, 15, 20, 230])
+      }
+    }
   }
+  for (const [x, y] of foreground) setPixel(rgba, x, y, [255, 255, 255, 255])
 }
 
 function setPixel(rgba: Uint8Array, x: number, y: number, color: Rgba): void {

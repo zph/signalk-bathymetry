@@ -25,9 +25,11 @@ The full design and safety model are in
   when the provider cannot return original `$source` metadata.
 - Automatic 30-day History API backfill after startup when the local evidence
   store is empty, with delayed provider discovery and bounded retries.
-- Fixed metric surface cells with robust pass estimates, uncertainty,
-  confidence, age decay, and asymmetric seabed-change handling.
-- Transparent PNG layers for depth, confidence, age, and change.
+- Fixed metric pointy-top hex cells with robust pass estimates, uncertainty,
+  confidence, age decay, and asymmetric seabed-change handling. Touching cells
+  render as one continuous measured swath without internal grid borders.
+- Transparent PNG layers for depth, confidence, age, and change, with optional
+  conservative depth numbers centered in cells at high zoom.
 - Two read-only Signal K chart resources discovered by Freeboard-SK:
   chart-datum depth and tide-adjusted current under-keel safety.
 - HTTP inspection API, administrator backfill/reprocessing endpoints, OpenAPI
@@ -60,6 +62,7 @@ measured vessel offsets and tide datum before recording.
 - `stationaryWindowSeconds` and `stationaryMinimumSamples`: robust aggregation
   at anchor; defaults 60 seconds and 10 samples.
 - `baseCellMeters`, `recencyHalfLifeDays`, and change-confirmation thresholds.
+- `showDepthLabels` and `depthLabelMinZoom`; defaults show numbers from zoom 19.
 - `autoBackfillWhenEmpty`, `autoBackfillDays`, and
   `autoBackfillDelaySeconds`; defaults are enabled, 30 days, and 15 seconds.
 
@@ -85,8 +88,10 @@ Open Freeboard's chart/layer selector and enable one of:
 
 Both are PNG XYZ overlays with alpha baked from `overlayOpacity`, so the normal
 chart remains visible. Disable the selected resource to return to the normal
-chart. Gray stippling marks lower confidence and magenta cell borders mark a
-suspected or confirmed change.
+chart. At zoom 19 and above, each sufficiently large hex is labeled with its
+conservative depth: datum depth in the datum layer, or tide-projected water
+depth in the tide-adjusted layer. Gray stippling marks lower confidence and
+magenta cell borders mark a suspected or confirmed change.
 
 ## API
 

@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
-import { cellForPosition, lonLatToMercator, mercatorToLonLat } from './geo'
+import {
+  bboxToCellRange,
+  cellForPosition,
+  hexCellMercatorBounds,
+  hexCellVertices,
+  lonLatToMercator,
+  mercatorToLonLat
+} from './geo'
 import { median, robustSigma, weightedGeometricMean } from './statistics'
 import type {
   BathymetryConfig,
@@ -13,7 +20,8 @@ import type {
   SurfaceCell
 } from './types'
 
-const MODEL_VERSION = 2
+const MODEL_VERSION = 3
+const GRID_VERSION = 'hex-pointy-v1'
 const DAY_MS = 86_400_000
 
 interface RawCellRow {
@@ -225,11 +233,20 @@ export class BathymetryStore {
   listCellsForBbox(bbox: [number, number, number, number], datum: string): SurfaceCell[] {
     const southwest = lonLatToMercator({ longitude: bbox[0], latitude: bbox[1] })
     const northeast = lonLatToMercator({ longitude: bbox[2], latitude: bbox[3] })
+    const range = bboxToCellRange(
+      {
+        minX: southwest.x,
+        minY: southwest.y,
+        maxX: northeast.x,
+        maxY: northeast.y
+      },
+      this.config.baseCellMeters
+    )
     return this.getCellsInRange(
-      Math.floor(southwest.x / this.config.baseCellMeters),
-      Math.floor(southwest.y / this.config.baseCellMeters),
-      Math.floor(northeast.x / this.config.baseCellMeters),
-      Math.floor(northeast.y / this.config.baseCellMeters),
+      range.minCellX,
+      range.minCellY,
+      range.maxCellX,
+      range.maxCellY,
       datum
     )
   }
@@ -364,15 +381,22 @@ export class BathymetryStore {
   }
 
   cellBounds(cell: SurfaceCell): [number, number, number, number] {
-    const min = mercatorToLonLat(
-      cell.cellX * this.config.baseCellMeters,
-      cell.cellY * this.config.baseCellMeters
-    )
-    const max = mercatorToLonLat(
-      (cell.cellX + 1) * this.config.baseCellMeters,
-      (cell.cellY + 1) * this.config.baseCellMeters
-    )
+    const bounds = hexCellMercatorBounds(cell.cellX, cell.cellY, this.config.baseCellMeters)
+    const min = mercatorToLonLat(bounds.minX, bounds.minY)
+    const max = mercatorToLonLat(bounds.maxX, bounds.maxY)
     return [min.longitude, min.latitude, max.longitude, max.latitude]
+  }
+
+  cellPolygon(cell: SurfaceCell): Array<[number, number]> {
+    const ring = hexCellVertices(cell.cellX, cell.cellY, this.config.baseCellMeters).map(
+      (vertex): [number, number] => {
+        const position = mercatorToLonLat(vertex.x, vertex.y)
+        return [position.longitude, position.latitude]
+      }
+    )
+    const first = ring[0]
+    if (first) ring.push(first)
+    return ring
   }
 
   private migrate(): void {
@@ -458,7 +482,10 @@ export class BathymetryStore {
         new_depth_mm INTEGER NOT NULL,
         changed_at_ms INTEGER NOT NULL
       ) STRICT;
-      PRAGMA user_version=2;
+      CREATE TABLE IF NOT EXISTS bathymetry_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      ) STRICT;
     `)
     this.ensureColumn('raw_soundings', 'aggregation_kind', "TEXT NOT NULL DEFAULT 'point'")
     this.ensureColumn('raw_soundings', 'sample_count', 'INTEGER NOT NULL DEFAULT 1')
@@ -470,6 +497,44 @@ export class BathymetryStore {
       UPDATE raw_soundings SET window_start_ms=observed_at_ms WHERE window_start_ms=0;
       UPDATE raw_soundings SET window_end_ms=observed_at_ms WHERE window_end_ms=0;
     `)
+    this.migrateGridIfNeeded()
+    this.db.exec('PRAGMA user_version=3;')
+  }
+
+  private migrateGridIfNeeded(): void {
+    const expected = `${GRID_VERSION}:${this.config.baseCellMeters}`
+    const metadata = this.db
+      .prepare("SELECT value FROM bathymetry_metadata WHERE key='grid_layout'")
+      .get() as { value: string } | undefined
+    if (metadata?.value === expected) return
+
+    const rows = this.db
+      .prepare('SELECT id, lat_e7, lon_e7 FROM raw_soundings')
+      .all() as unknown as Array<{ id: number; lat_e7: number; lon_e7: number }>
+    const update = this.db.prepare('UPDATE raw_soundings SET cell_x=?, cell_y=? WHERE id=?')
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const row of rows) {
+        const cell = cellForPosition(
+          { latitude: row.lat_e7 / 1e7, longitude: row.lon_e7 / 1e7 },
+          this.config.baseCellMeters
+        )
+        update.run(cell.x, cell.y, row.id)
+      }
+      this.db.prepare('DELETE FROM qc_classifications WHERE model_version=?').run(MODEL_VERSION)
+      this.db.prepare('DELETE FROM surface_cells WHERE model_version=?').run(MODEL_VERSION)
+      this.db.prepare('DELETE FROM surface_cell_history WHERE model_version=?').run(MODEL_VERSION)
+      this.db
+        .prepare(`
+          INSERT INTO bathymetry_metadata (key, value) VALUES ('grid_layout', ?)
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        `)
+        .run(expected)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
