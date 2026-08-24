@@ -41,7 +41,13 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
         )
         runtime = { config, store, capture, history, autoBackfill, depthUnits, renderer }
         app.registerResourceProvider(createChartProvider(store, config, () => depthUnits.current()))
-        app.registerResourceProvider(createInfoLayerProvider(config, () => depthUnits.current()))
+        app.registerResourceProvider(
+          createInfoLayerProvider(
+            config,
+            () => depthUnits.current(),
+            join(dataDirectory, 'bathymetry-info-layers.json')
+          )
+        )
         capture.start()
         autoBackfill.start()
         depthUnits.start()

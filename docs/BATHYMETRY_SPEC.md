@@ -643,6 +643,12 @@ resources with `refreshInterval: 600000`. Freeboard's information-layer timer
 calls the source refresh operation every 10 minutes, clearing its tile cache and
 re-requesting visible tide-adjusted tiles.
 
+Freeboard may save presentation opacity through the information-layer resource
+API. The provider persists opacity independently for the datum and live-water
+layers, while ignoring client changes to authoritative URL, mode, refresh, and
+zoom fields. This client opacity multiplies the server-rendered
+`overlayOpacity` base value.
+
 The overlay has three mutually exclusive display states:
 
 1. **Off** — normal Freeboard chart with no bathymetry color overlay.
