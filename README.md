@@ -92,7 +92,11 @@ Both are PNG XYZ overlays with alpha baked from `overlayOpacity`, so the normal
 chart remains visible. Disable the selected resource to return to the normal
 chart. At zoom 19 and above, each sufficiently large hex is labeled with its
 conservative depth: datum depth in the datum layer, or tide-projected water
-depth in the tide-adjusted layer. Gray stippling marks lower confidence and
+depth in the tide-adjusted layer. Labels use clean contrast-aware digits without
+an outline, grow with zoom, and continue across XYZ tile seams without clipping.
+Depths below 10 display units retain the configured decimal precision; depths
+of 10 or more omit decimals. All labels round down so they never overstate depth.
+Gray stippling marks lower confidence and
 magenta cell borders mark a suspected or confirmed change.
 
 The plugin reads Signal K's resolved `depth` unit preference once after startup,

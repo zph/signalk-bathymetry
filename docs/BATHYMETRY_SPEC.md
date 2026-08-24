@@ -593,7 +593,12 @@ edges are not stroked. Only the exposed perimeter of a measured region is
 outlined. Magenta change-state outlines remain cell-specific because they are
 safety signals. Depth labels are enabled independently and appear only above a
 configured minimum zoom; they show conservative datum depth in chart-datum mode
-and conservative tide-projected water depth in tide-adjusted mode.
+and conservative tide-projected water depth in tide-adjusted mode. The raster
+glyphs use a single contrast-aware foreground color without an outline, scale
+with zoom, and are painted in every intersected XYZ tile so labels remain intact
+across tile seams. Values below 10 in the resolved display unit retain the unit's
+decimal precision; values at or above 10 omit decimals. Every displayed value is
+rounded down at its shown precision so the label never overstates available depth.
 
 Rendered labels follow the Signal K server's resolved `depth` unit preference,
 queried from `/signalk/v1/unitpreferences/active` after startup and cached for

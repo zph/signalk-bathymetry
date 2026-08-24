@@ -5,9 +5,17 @@ import test from 'node:test'
 import { normalizeConfig } from '../src/config'
 import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
-import { ProjectionUnavailableError, TileRenderer } from '../src/tiles'
+import { formatDepth, ProjectionUnavailableError, TileRenderer } from '../src/tiles'
 import { sounding } from './helpers'
 import { METRIC_DEPTH_UNITS, type DepthDisplayUnits } from '../src/depth-units'
+
+test('depth labels conservatively round down at ten display units and above', () => {
+  assert.equal(formatDepth(9.89, 1), '9.8')
+  assert.equal(formatDepth(10, 1), '10')
+  assert.equal(formatDepth(10.9, 1), '10')
+  assert.equal(formatDepth(-1.21, 1), '-1.3')
+  assert.equal(formatDepth(-12.4, 1), '-13')
+})
 
 test('renderer emits joined hex PNG tiles, labels depth, and requires fresh projected tide', (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-tile-test-'))

@@ -132,14 +132,13 @@ export class TileRenderer {
     rgba: Uint8Array,
     cell: SurfaceCell,
     bounds: ReturnType<typeof tileMercatorBounds>,
-    options: { z: number; mode: DepthMode },
+    options: { z: number; layer: TileLayer; mode: DepthMode; atMs: number },
     projection: TideProjection | undefined
   ): boolean {
     const center = hexCellCenter(cell.cellX, cell.cellY, this.config.baseCellMeters)
     const span = bounds.maxX - bounds.minX
     const centerX = ((center.x - bounds.minX) / span) * TILE_SIZE
     const centerY = ((bounds.maxY - center.y) / span) * TILE_SIZE
-    if (centerX < 0 || centerX >= TILE_SIZE || centerY < 0 || centerY >= TILE_SIZE) return false
 
     const combinedSigma = projection
       ? Math.sqrt(cell.verticalSigmaM ** 2 + projection.sigmaM ** 2)
@@ -150,14 +149,29 @@ export class TileRenderer {
     const units = this.getDepthUnits()
     const text = formatDepth(depthM * units.metersToDisplayFactor, units.decimals)
     const availableWidth = (this.config.baseCellMeters / span) * TILE_SIZE
-    const preferredScale = options.z >= this.config.depthLabelMinZoom + 1 ? 2 : 1
-    const scale =
-      preferredScale === 2 && (text.length * 4 - 1) * 2 + 2 <= availableWidth
-        ? 2
-        : 1
+    const zoomSteps = Math.max(0, options.z - this.config.depthLabelMinZoom)
+    let scale = Math.min(4, 2 ** zoomSteps)
+    while (scale > 1 && bitmapTextWidth(text, scale) > availableWidth) scale -= 1
     const labelWidth = (text.length * 4 - 1) * scale
-    if (labelWidth + 2 > availableWidth) return false
-    paintBitmapText(rgba, text, Math.round(centerX), Math.round(centerY), scale)
+    const labelHeight = 5 * scale
+    if (labelWidth > availableWidth) return false
+
+    // A label whose center falls just outside this XYZ tile still needs its visible
+    // fragment painted here. Rendering the same world-aligned glyph in both tiles
+    // prevents digits from being clipped at tile seams.
+    const left = Math.round(centerX - labelWidth / 2)
+    const top = Math.round(centerY - labelHeight / 2)
+    if (
+      left >= TILE_SIZE ||
+      top >= TILE_SIZE ||
+      left + labelWidth <= 0 ||
+      top + labelHeight <= 0
+    ) {
+      return false
+    }
+
+    const fill = this.colorForCell(cell, options, projection)
+    paintBitmapText(rgba, text, Math.round(centerX), Math.round(centerY), scale, contrastText(fill))
     return true
   }
 
@@ -341,8 +355,20 @@ const FONT: Readonly<Record<string, readonly string[]>> = {
   '-': ['000', '000', '111', '000', '000']
 }
 
-function formatDepth(depth: number, decimals: number): string {
-  return Math.abs(depth) < 100 ? depth.toFixed(decimals) : String(Math.round(depth))
+export function formatDepth(depth: number, decimals: number): string {
+  if (Math.abs(depth) >= 10) return String(Math.floor(depth))
+  const precision = 10 ** decimals
+  return (Math.floor(depth * precision) / precision).toFixed(decimals)
+}
+
+function bitmapTextWidth(text: string, scale: number): number {
+  return (text.length * 4 - 1) * scale
+}
+
+function contrastText(background: Rgba): Rgba {
+  const perceivedBrightness =
+    (background[0] * 299 + background[1] * 587 + background[2] * 114) / 1000
+  return perceivedBrightness >= 125 ? [12, 22, 32, 255] : [255, 255, 255, 255]
 }
 
 function paintBitmapText(
@@ -350,13 +376,13 @@ function paintBitmapText(
   text: string,
   centerX: number,
   centerY: number,
-  scale: number
+  scale: number,
+  color: Rgba
 ): void {
-  const width = (text.length * 4 - 1) * scale
+  const width = bitmapTextWidth(text, scale)
   const height = 5 * scale
   const left = Math.round(centerX - width / 2)
   const top = Math.round(centerY - height / 2)
-  const foreground: Array<[number, number]> = []
   for (let characterIndex = 0; characterIndex < text.length; characterIndex += 1) {
     const glyph = FONT[text[characterIndex]!]
     if (!glyph) continue
@@ -365,23 +391,17 @@ function paintBitmapText(
         if (glyph[row]![column] !== '1') continue
         for (let offsetY = 0; offsetY < scale; offsetY += 1) {
           for (let offsetX = 0; offsetX < scale; offsetX += 1) {
-            foreground.push([
+            setPixel(
+              rgba,
               left + (characterIndex * 4 + column) * scale + offsetX,
-              top + row * scale + offsetY
-            ])
+              top + row * scale + offsetY,
+              color
+            )
           }
         }
       }
     }
   }
-  for (const [x, y] of foreground) {
-    for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
-      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
-        setPixel(rgba, x + offsetX, y + offsetY, [10, 15, 20, 230])
-      }
-    }
-  }
-  for (const [x, y] of foreground) setPixel(rgba, x, y, [255, 255, 255, 255])
 }
 
 function setPixel(rgba: Uint8Array, x: number, y: number, color: Rgba): void {
