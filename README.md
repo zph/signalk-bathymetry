@@ -102,7 +102,9 @@ magenta cell borders mark a suspected or confirmed change.
 
 When zooming out below level 18, the renderer uses a world-aligned overview
 pyramid instead of letting 5 m cells disappear below one pixel. Overview hexes
-grow from 10 m at zoom 18 to 160 m at zoom 14, with a 320 m safety cap. Their
+remain roughly 32 screen pixels wide so they are visible around Freeboard's
+vessel icon: 20 m at zoom 18, 40 m at zoom 17, 80 m at zoom 16, 160 m at zoom
+15, and 320 m at zoom 14. Native 5 m cells remain at zoom 19 and above. Their
 depth/clearance color is controlled by the shallowest accepted conservative
 source cell, never an average. Sparse source coverage lowers overview confidence
 and activates the gray stipple so a large abstracted hex is not presented as a

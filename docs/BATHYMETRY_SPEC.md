@@ -602,8 +602,8 @@ decimal precision; values at or above 10 omit decimals. Every displayed value is
 rounded down at its shown precision so the label never overstates available depth.
 
 At overview zooms the raster surface uses world-aligned, power-of-two coarser
-hexes sized to remain at least ten screen pixels wide (normally about 16 after
-power-of-two selection). Each overview
+hexes sized to remain approximately 32 screen pixels wide below zoom 19, while
+zoom 19 and above retain native source cells. Each overview
 hex is controlled by the shallowest QC-accepted conservative source cell in its
 bin; it is never colored from a mean depth. The aggregate confidence is capped
 by the square root of measured fine-cell coverage, causing sparse overview cells

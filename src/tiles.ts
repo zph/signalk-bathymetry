@@ -12,7 +12,7 @@ import type { BathymetryStore } from './store'
 import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
 const TILE_SIZE = 256
-const OVERVIEW_TARGET_PIXELS = 10
+const OVERVIEW_TARGET_PIXELS = 32
 const OVERVIEW_MAX_CELL_METERS = 320
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
@@ -247,6 +247,9 @@ export class TileRenderer {
 }
 
 export function overviewCellMeters(baseCellMeters: number, zoom: number): number {
+  // Preserve the native survey grid and depth labels at close range. Below z19,
+  // remain visible around Freeboard's larger vessel icon.
+  if (zoom >= 19) return baseCellMeters
   const metersPerPixel = (2 * WEB_MERCATOR_LIMIT) / (2 ** zoom * TILE_SIZE)
   const requiredMeters = metersPerPixel * OVERVIEW_TARGET_PIXELS
   if (requiredMeters <= baseCellMeters) return baseCellMeters
