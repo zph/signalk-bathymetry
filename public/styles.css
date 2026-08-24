@@ -384,6 +384,17 @@ select {
 .cell-metrics dt { margin-bottom: .22rem; color: #789493; font-size: .66rem; }
 .cell-metrics dd { margin: 0; color: #eaf4f3; font-size: .9rem; font-weight: 700; }
 
+.confidence-notes {
+  margin-top: .8rem;
+  border: 1px solid #294950;
+  border-radius: 10px;
+  padding: .68rem .75rem;
+  background: #0c2227;
+}
+.confidence-notes > span { color: #8aa3a2; font-size: .68rem; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
+.confidence-notes ul { margin: .42rem 0 0; padding-left: 1.05rem; color: #b5c8c6; font-size: .7rem; line-height: 1.45; }
+.confidence-notes li + li { margin-top: .24rem; }
+
 .age-range { margin: .8rem 0 1.2rem; color: #789493; font-size: .7rem; }
 .age-range strong { display: block; margin-top: .2rem; color: #bed1cf; font-size: .76rem; font-weight: 550; }
 

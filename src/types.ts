@@ -106,6 +106,9 @@ export interface SurfaceCell {
   conservativeDepthM: number
   verticalSigmaM: number
   confidence: number
+  confidenceReasons?: string[]
+  neighborSupportCount?: number
+  neighborDepthDeltaM?: number
   soundingCount: number
   observationCount: number
   passCount: number

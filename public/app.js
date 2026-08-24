@@ -353,12 +353,14 @@ function renderInspection(cell) {
   byId('cell-observations').textContent = number(cell.observationCount)
   byId('cell-passes').textContent = number(cell.passCount)
   byId('cell-sources').textContent = number(cell.sourceCount)
+  byId('cell-neighbors').textContent = number(cell.neighborSupportCount)
   byId('cell-range').textContent = `${formatDate(cell.oldestAtMs)} – ${formatDate(cell.newestAtMs)}`
 
   const stateBadge = byId('cell-state')
   stateBadge.textContent = friendlyChangeState(cell.changeState)
   stateBadge.className = `state-badge ${cell.changeState === 'stable' ? '' : cell.changeState === 'confirmed' ? 'danger' : 'warning'}`
   renderCellFlags(cell)
+  renderConfidenceReasons(cell)
   byId('evidence-summary').textContent = 'Loading raw observations…'
   byId('evidence-list').replaceChildren()
 }
@@ -372,6 +374,11 @@ function renderCellFlags(cell) {
   else flags.push([`${cell.passCount} passes`, 'good'])
   if (cell.sourceCount <= 1) flags.push(['Single source', 'warning'])
   else flags.push([`${cell.sourceCount} sources`, 'good'])
+  if (cell.confidenceReasons?.includes('neighbor_depth_disagreement')) {
+    flags.push([`${formatDepth(cell.neighborDepthDeltaM)} ${depthSymbol()} different from strong neighbors`, 'danger'])
+  } else if (cell.neighborSupportCount >= 2) {
+    flags.push([`Agrees locally with ${cell.neighborSupportCount} strong cells`, 'good'])
+  }
   if (ageDays(cell.newestAtMs) > recencyHalfLifeDays()) flags.push(['Older than confidence half-life', 'danger'])
   if (cell.changeState !== 'stable') flags.push([friendlyChangeState(cell.changeState), 'danger'])
   const container = byId('cell-flags')
@@ -380,6 +387,23 @@ function renderCellFlags(cell) {
     flag.className = `flag ${tone}`
     flag.textContent = label
     return flag
+  }))
+}
+
+function renderConfidenceReasons(cell) {
+  const reasons = (cell.confidenceReasons || []).map((reason) => ({
+    single_observation: 'Only one independent stored observation; confidence is capped at 25%.',
+    only_two_observations: 'Only two independent stored observations; confidence is capped at 40%.',
+    single_pass: 'All accepted evidence is from one pass or visit; confidence is capped at 35%.',
+    only_two_passes: 'Evidence spans only two passes or visits; confidence is capped at 60%.',
+    single_source: 'Only one depth source contributed; confidence cannot reach the highest tier.',
+    neighbor_depth_disagreement: `This weak cell differs by ${formatDepth(cell.neighborDepthDeltaM)} ${depthSymbol()} from at least two stronger adjacent cells.`
+  })[reason] || String(reason).replaceAll('_', ' '))
+  if (reasons.length === 0) reasons.push('No evidence caps are currently limiting this cell.')
+  byId('confidence-reasons').replaceChildren(...reasons.map((reason) => {
+    const item = document.createElement('li')
+    item.textContent = reason
+    return item
   }))
 }
 

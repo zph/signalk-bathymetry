@@ -20,9 +20,17 @@ import type {
   SurfaceCell
 } from './types'
 
-const MODEL_VERSION = 3
+const MODEL_VERSION = 4
 const GRID_VERSION = 'hex-pointy-v1'
 const DAY_MS = 86_400_000
+const AXIAL_NEIGHBORS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, -1],
+  [-1, 1]
+] as const
 
 interface RawCellRow {
   id: number
@@ -217,17 +225,13 @@ export class BathymetryStore {
       string,
       unknown
     >[]
-    return rows.map((row) => this.mapCell(row))
+    return this.applyNeighborhoodConfidence(rows.map((row) => this.mapCell(row)))
   }
 
   lookupCell(latitude: number, longitude: number, datum: string): SurfaceCell | undefined {
     const cell = cellForPosition({ latitude, longitude }, this.config.baseCellMeters)
-    const row = this.db
-      .prepare(
-        'SELECT * FROM surface_cells WHERE cell_x=? AND cell_y=? AND datum=? AND model_version=?'
-      )
-      .get(cell.x, cell.y, datum, MODEL_VERSION) as Record<string, unknown> | undefined
-    return row ? this.mapCell(row) : undefined
+    return this.getCellsInRange(cell.x - 1, cell.y - 1, cell.x + 1, cell.y + 1, datum, 20)
+      .find((candidate) => candidate.cellX === cell.x && candidate.cellY === cell.y)
   }
 
   listCellsForBbox(bbox: [number, number, number, number], datum: string): SurfaceCell[] {
@@ -660,7 +664,7 @@ export class BathymetryStore {
     const sourceCount = new Set(activeRows.map((row) => row.depth_source)).size
     const observationEvidence = 1 - Math.exp(-activeRows.length / 4)
     const visitDiversity = 0.45 + 0.55 * Math.min(1, active.passes.length / 3)
-    const confidence = weightedGeometricMean([
+    const calculatedConfidence = weightedGeometricMean([
       { value: Math.exp(-measurementSigmaM / 1), weight: 2 },
       { value: observationEvidence, weight: 1 },
       { value: visitDiversity, weight: 2 },
@@ -668,6 +672,10 @@ export class BathymetryStore {
       { value: Math.exp(-withinVisitSigmaM / 0.5), weight: 1 },
       { value: sourceCount >= 2 ? 1 : 0.7, weight: 1 }
     ])
+    const confidence = Math.min(
+      calculatedConfidence,
+      evidenceConfidenceCap(activeRows.length, active.passes.length, sourceCount)
+    )
     const oldestAtMs = Math.min(...activeRows.map((row) => row.observed_at_ms))
     const newestAtMs = Math.max(...activeRows.map((row) => row.observed_at_ms))
 
@@ -714,6 +722,9 @@ export class BathymetryStore {
     const newestAtMs = Number(row.newest_at_ms)
     const ageDays = Math.max(0, Date.now() - newestAtMs) / DAY_MS
     const recency = 2 ** (-ageDays / this.config.recencyHalfLifeDays)
+    const observationCount = Number(row.observation_count)
+    const passCount = Number(row.pass_count)
+    const sourceCount = Number(row.source_count)
     return {
       cellX: Number(row.cell_x),
       cellY: Number(row.cell_y),
@@ -723,16 +734,68 @@ export class BathymetryStore {
       conservativeDepthM: Number(row.conservative_depth_mm) / 1000,
       verticalSigmaM: Number(row.vertical_sigma_mm) / 1000,
       confidence: Math.min(1, Number(row.confidence_base) * recency),
+      confidenceReasons: evidenceConfidenceReasons(observationCount, passCount, sourceCount),
       soundingCount: Number(row.sounding_count),
-      observationCount: Number(row.observation_count),
-      passCount: Number(row.pass_count),
-      sourceCount: Number(row.source_count),
+      observationCount,
+      passCount,
+      sourceCount,
       oldestAtMs: Number(row.oldest_at_ms),
       newestAtMs,
       changeState: String(row.change_state) as ChangeState,
       updatedAtMs: Number(row.updated_at_ms)
     }
   }
+
+  private applyNeighborhoodConfidence(cells: SurfaceCell[]): SurfaceCell[] {
+    const byCell = new Map(cells.map((cell) => [`${cell.cellX}:${cell.cellY}`, cell]))
+    return cells.map((cell) => {
+      const neighbors = AXIAL_NEIGHBORS
+        .map(([x, y]) => byCell.get(`${cell.cellX + x}:${cell.cellY + y}`))
+        .filter((neighbor): neighbor is SurfaceCell => neighbor !== undefined)
+      const strongNeighbors = neighbors.filter(
+        (neighbor) => neighbor.observationCount >= 3 && neighbor.passCount >= 2 && neighbor.confidence >= 0.55
+      )
+      const result: SurfaceCell = {
+        ...cell,
+        confidenceReasons: [...(cell.confidenceReasons ?? [])],
+        neighborSupportCount: strongNeighbors.length
+      }
+      if (strongNeighbors.length < 2 || (cell.observationCount > 2 && cell.passCount > 1)) return result
+
+      const neighborDepths = strongNeighbors.map((neighbor) => neighbor.robustDepthM)
+      const localDepthM = median(neighborDepths)
+      const neighborSpreadM = robustSigma(neighborDepths)
+      const deltaM = Math.abs(cell.robustDepthM - localDepthM)
+      const toleranceM = Math.max(this.config.outlierFloorM * 1.5, neighborSpreadM * 2.5)
+      result.neighborDepthDeltaM = deltaM
+      if (deltaM <= toleranceM) return result
+
+      const weakEvidenceCap = cell.observationCount <= 1 ? 0.12 : cell.observationCount <= 2 ? 0.22 : 0.3
+      result.confidence = Math.min(result.confidence, weakEvidenceCap)
+      result.confidenceReasons?.push('neighbor_depth_disagreement')
+      return result
+    })
+  }
+}
+
+function evidenceConfidenceCap(observationCount: number, passCount: number, sourceCount: number): number {
+  let cap = 1
+  if (observationCount <= 1) cap = Math.min(cap, 0.25)
+  else if (observationCount === 2) cap = Math.min(cap, 0.4)
+  if (passCount <= 1) cap = Math.min(cap, 0.35)
+  else if (passCount === 2) cap = Math.min(cap, 0.6)
+  if (sourceCount <= 1) cap = Math.min(cap, 0.75)
+  return cap
+}
+
+function evidenceConfidenceReasons(observationCount: number, passCount: number, sourceCount: number): string[] {
+  const reasons: string[] = []
+  if (observationCount <= 1) reasons.push('single_observation')
+  else if (observationCount === 2) reasons.push('only_two_observations')
+  if (passCount <= 1) reasons.push('single_pass')
+  else if (passCount === 2) reasons.push('only_two_passes')
+  if (sourceCount <= 1) reasons.push('single_source')
+  return reasons
 }
 
 function aggregatePasses(rows: readonly RawCellRow[]): PassEstimate[] {

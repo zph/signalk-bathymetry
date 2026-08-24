@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { normalizeConfig } from '../src/config'
+import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
 import { sounding } from './helpers'
 
@@ -34,9 +35,44 @@ test('ingest is deduplicated and retains the datum reduction', (t) => {
   assert.equal(cell.robustDepthM, 5.5)
   assert.equal(cell.soundingCount, 1)
   assert.equal(cell.observationCount, 1)
+  assert.ok(cell.confidence <= 0.25)
+  assert.ok(cell.confidenceReasons?.includes('single_observation'))
+  assert.ok(cell.confidenceReasons?.includes('single_pass'))
   const raw = store.listSoundings({ limit: 10 })
   assert.equal(raw[0]?.datumDepthM, 5.5)
   assert.equal(raw[0]?.qcState, 'accepted')
+})
+
+test('a weak isolated depth disagreement is penalized by stronger adjacent cells', (t) => {
+  const { store, config } = withStore(t)
+  const weak = sounding(config, {
+    observedAtMs: Date.UTC(2026, 0, 10),
+    datumDepthM: 10,
+    rawDepthM: 9.5,
+    passId: 'weak-only-pass'
+  })
+  const center = cellForPosition(weak, config.baseCellMeters)
+  const neighborOffsets = [[1, 0], [0, 1], [-1, 1]] as const
+  const strong = neighborOffsets.flatMap(([offsetX, offsetY], neighborIndex) => {
+    const mercator = hexCellCenter(center.x + offsetX, center.y + offsetY, config.baseCellMeters)
+    const position = mercatorToLonLat(mercator.x, mercator.y)
+    return [0, 1, 2].map((passIndex) => sounding(config, {
+      latitude: position.latitude,
+      longitude: position.longitude,
+      observedAtMs: Date.UTC(2026, 0, 1 + passIndex),
+      datumDepthM: 5 + neighborIndex * 0.03,
+      rawDepthM: 4.5 + neighborIndex * 0.03,
+      passId: `neighbor-${neighborIndex}-pass-${passIndex}`
+    }))
+  })
+  store.ingest([...strong, weak])
+
+  const cell = store.lookupCell(weak.latitude, weak.longitude, config.targetDatum)
+  assert.ok(cell)
+  assert.ok((cell.neighborSupportCount ?? 0) >= 2)
+  assert.ok((cell.neighborDepthDeltaM ?? 0) > 4)
+  assert.ok(cell.confidence <= 0.12)
+  assert.ok(cell.confidenceReasons?.includes('neighbor_depth_disagreement'))
 })
 
 test('stationary aggregate counts samples without claiming extra passes', (t) => {

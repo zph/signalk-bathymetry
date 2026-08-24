@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#071419" />
     <title>Local Bathymetry · Quality Control</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=0.3.2" />
   </head>
   <body>
     <main>
@@ -117,7 +117,13 @@
               <div><dt>Observations</dt><dd id="cell-observations">—</dd></div>
               <div><dt>Independent passes</dt><dd id="cell-passes">—</dd></div>
               <div><dt>Depth sources</dt><dd id="cell-sources">—</dd></div>
+              <div><dt>Strong nearby cells</dt><dd id="cell-neighbors">—</dd></div>
             </dl>
+
+            <div class="confidence-notes">
+              <span>Confidence limits</span>
+              <ul id="confidence-reasons"></ul>
+            </div>
 
             <div class="age-range">
               <span>Evidence range</span>
@@ -186,6 +192,6 @@
       <div id="measurement-flags" class="flags"></div>
       <dl id="measurement-details" class="measurement-details"></dl>
     </dialog>
-    <script src="app.js"></script>
+    <script src="app.js?v=0.3.2"></script>
   </body>
 </html>
