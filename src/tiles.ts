@@ -153,14 +153,10 @@ export class TileRenderer {
       for (let x = left; x < right; x += 1) {
         if (!pointInPolygon(x + 0.5, y + 0.5, polygon)) continue
         const index = (y * TILE_SIZE + x) * 4
-        let pixel = color
-        if (options.layer === 'depth' && cell.confidence < 0.55 && (x + y) % 7 < 2) {
-          pixel = [70, 70, 75, Math.min(210, color[3] + 40)]
-        }
-        rgba[index] = pixel[0]
-        rgba[index + 1] = pixel[1]
-        rgba[index + 2] = pixel[2]
-        rgba[index + 3] = pixel[3]
+        rgba[index] = color[0]
+        rgba[index + 1] = color[1]
+        rgba[index + 2] = color[2]
+        rgba[index + 3] = color[3]
       }
     }
     return polygon
@@ -214,7 +210,7 @@ export class TileRenderer {
       return false
     }
 
-    const fill = this.colorForCell(cell, options, projection)
+    const badge = confidenceBadgeColor(cell.confidence)
     const labelCenterX = Math.round(centerX)
     const labelCenterY = Math.round(centerY)
     paintLabelPlate(
@@ -224,9 +220,9 @@ export class TileRenderer {
       labelWidth + 2 * padding,
       labelHeight + 2 * padding,
       Math.max(2, scale),
-      [fill[0], fill[1], fill[2], Math.max(225, fill[3])]
+      [badge[0], badge[1], badge[2], 242]
     )
-    paintBitmapText(rgba, text, labelCenterX, labelCenterY, scale, contrastText(fill))
+    paintBitmapText(rgba, text, labelCenterX, labelCenterY, scale, [255, 255, 255, 255])
     return true
   }
 
@@ -345,11 +341,17 @@ type Rgba = [number, number, number, number]
 type ColorStop = [number, Rgb]
 
 const CONFIDENCE_STOPS: ColorStop[] = [
-  [0, [190, 25, 35]],
-  [0.55, [235, 165, 25]],
-  [0.8, [80, 180, 80]],
-  [1, [20, 120, 70]]
+  [0, [145, 25, 40]],
+  [0.4, [190, 55, 35]],
+  [0.6, [175, 120, 10]],
+  [0.8, [45, 140, 70]],
+  [1, [15, 100, 60]]
 ]
+
+/** Label badge color: red (weak evidence) through amber to green (strong evidence). */
+export function confidenceBadgeColor(confidence: number): Rgb {
+  return interpolateStops(Math.max(0, Math.min(1, confidence)), CONFIDENCE_STOPS)
+}
 
 const AGE_STOPS: ColorStop[] = [
   [0, [95, 95, 100]],
@@ -539,12 +541,6 @@ export function formatDepth(depth: number, decimals: number): string {
 
 function bitmapTextWidth(text: string, scale: number): number {
   return (text.length * 4 - 1) * scale
-}
-
-function contrastText(background: Rgba): Rgba {
-  const perceivedBrightness =
-    (background[0] * 299 + background[1] * 587 + background[2] * 114) / 1000
-  return perceivedBrightness >= 125 ? [12, 22, 32, 255] : [255, 255, 255, 255]
 }
 
 function paintLabelPlate(

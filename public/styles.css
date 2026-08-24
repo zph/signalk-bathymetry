@@ -497,8 +497,15 @@ select {
 
 .legend { color: #8ea6a5; font-size: .69rem; }
 .legend > span:last-of-type { float: right; }
-.legend div { height: 27px; margin: .36rem 0; border-radius: 7px; background: linear-gradient(90deg, #d22d23, #f57823, #f5d741, #32cdd7, #2378cd, #192d6e); }
+.legend-gradient { height: 27px; margin: .36rem 0; border-radius: 7px; background: linear-gradient(90deg, #d22d23, #f57823, #f5d741, #32cdd7, #2378cd, #192d6e); }
 .legend small { display: block; color: #718d8c; line-height: 1.4; }
+.confidence-badge-legend { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: .75rem 0 .45rem; }
+.confidence-badge-legend[hidden] { display: none; }
+.confidence-badge-legend > div { display: flex; gap: .35rem; }
+.confidence-badge-legend b { min-width: 2.2rem; padding: .2rem .42rem; border-radius: 999px; color: #fff; text-align: center; font-size: .72rem; line-height: 1; }
+.confidence-badge-legend .badge-low { background: rgb(164, 40, 38); }
+.confidence-badge-legend .badge-medium { background: rgb(175, 120, 10); }
+.confidence-badge-legend .badge-high { background: rgb(27, 120, 65); }
 
 .system-status dl { display: grid; grid-template-columns: 14rem 1fr; gap: .55rem; margin: .5rem 0 0; }
 .system-status dt { color: #779291; }

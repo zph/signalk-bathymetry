@@ -723,7 +723,7 @@ function updateLegend() {
     depth: {
       low: 'Danger / dry', high: 'Deeper',
       gradient: 'linear-gradient(90deg,#d22d23,#f57823,#f5d741,#32cdd7,#2378cd,#192d6e)',
-      note: 'Gray hatching marks confidence below 55%; magenta outlines mark possible seabed change.'
+      note: 'Hex fill shows depth; the red–amber–green number badge shows confidence. Magenta outlines mark possible seabed change.'
     },
     confidence: {
       low: 'Low confidence', high: 'High confidence',
@@ -744,6 +744,7 @@ function updateLegend() {
   byId('legend-low').textContent = legend.low
   byId('legend-high').textContent = legend.high
   byId('legend-gradient').style.background = legend.gradient
+  byId('confidence-badge-legend').hidden = state.layer !== 'depth'
   byId('legend-note').textContent = legend.note
 }
 

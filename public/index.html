@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#071419" />
     <title>Local Bathymetry · Quality Control</title>
-    <link rel="stylesheet" href="styles.css?v=0.3.3" />
+    <link rel="stylesheet" href="styles.css?v=0.3.4" />
   </head>
   <body>
     <main>
@@ -42,7 +42,7 @@
             <label>
               <span>QC view</span>
               <select id="qc-layer" aria-label="Bathymetry quality-control view">
-                <option value="depth">Depth + confidence</option>
+                <option value="depth">Depth + confidence badges</option>
                 <option value="confidence">Confidence</option>
                 <option value="age">Recency</option>
                 <option value="change">Change detection</option>
@@ -161,9 +161,13 @@
           </div>
           <div class="legend" id="layer-legend" aria-label="Selected layer legend">
             <span id="legend-low">Danger / dry</span>
-            <div id="legend-gradient"></div>
+            <div id="legend-gradient" class="legend-gradient"></div>
             <span id="legend-high">Deeper</span>
-            <small id="legend-note">Gray hatching marks confidence below 55%; magenta outlines mark possible seabed change.</small>
+            <div id="confidence-badge-legend" class="confidence-badge-legend">
+              <span>Confidence badge</span>
+              <div><b class="badge-low">25</b><b class="badge-medium">60</b><b class="badge-high">90</b></div>
+            </div>
+            <small id="legend-note">Hex fill shows depth; the red–amber–green number badge shows confidence. Magenta outlines mark possible seabed change.</small>
           </div>
         </div>
       </section>
@@ -192,6 +196,6 @@
       <div id="measurement-flags" class="flags"></div>
       <dl id="measurement-details" class="measurement-details"></dl>
     </dialog>
-    <script src="app.js?v=0.3.3"></script>
+    <script src="app.js?v=0.3.4"></script>
   </body>
 </html>

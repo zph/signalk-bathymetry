@@ -7,6 +7,7 @@ import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
 import {
   aggregateOverviewCells,
+  confidenceBadgeColor,
   formatDepth,
   overviewCellMeters,
   ProjectionUnavailableError,
@@ -22,6 +23,17 @@ test('depth labels conservatively round down at ten display units and above', ()
   assert.equal(formatDepth(10.9, 1), '10')
   assert.equal(formatDepth(-1.21, 1), '-1.3')
   assert.equal(formatDepth(-12.4, 1), '-13')
+})
+
+test('confidence badges progress from red through amber to green', () => {
+  const low = confidenceBadgeColor(0.25)
+  const medium = confidenceBadgeColor(0.6)
+  const high = confidenceBadgeColor(0.9)
+  assert.ok(low[0] > low[1] * 2)
+  assert.ok(medium[0] > medium[2] * 8 && medium[1] > medium[2] * 8)
+  assert.ok(high[1] > high[0] * 2)
+  assert.deepEqual(confidenceBadgeColor(-1), confidenceBadgeColor(0))
+  assert.deepEqual(confidenceBadgeColor(2), confidenceBadgeColor(1))
 })
 
 test('overview uses larger world-aligned hexes and the shallowest conservative cell', () => {
