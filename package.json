@@ -1,0 +1,50 @@
+{
+  "name": "signalk-bathymetry",
+  "version": "0.1.0",
+  "description": "Source-aware local bathymetry, confidence surfaces, and Freeboard-SK overlays for Signal K",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "clean": "node -e \"const fs=require('node:fs'); for (const path of ['dist','.test-dist']) fs.rmSync(path,{recursive:true,force:true})\"",
+    "test": "npm run build && npm run build:test && node --test .test-dist/test/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "signalk-category-navigation",
+    "bathymetry",
+    "freeboard-sk",
+    "marine"
+  ],
+  "signalk-plugin-enabled-by-default": false,
+  "signalk": {
+    "displayName": "Local Bathymetry",
+    "webapp": "./public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zph/signalk-bathymetry.git"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1"
+  },
+  "devDependencies": {
+    "@signalk/server-api": "^2.31.1",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.2"
+  }
+}

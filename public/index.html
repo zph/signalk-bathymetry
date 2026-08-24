@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Local Bathymetry</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Signal K · supplemental navigation</p>
+        <h1>Local Bathymetry</h1>
+        <p class="warning">Not for primary navigation. Always defer to official charts and observed conditions.</p>
+      </header>
+
+      <section class="cards" aria-live="polite">
+        <article><span>Source samples</span><strong id="soundings">—</strong></article>
+        <article><span>Surface cells</span><strong id="cells">—</strong></article>
+        <article><span>Stored records</span><strong id="accepted">—</strong></article>
+        <article><span>Datum</span><strong id="datum">—</strong></article>
+      </section>
+
+      <section class="panel">
+        <div>
+          <h2>Freeboard overlays</h2>
+          <p>The plugin publishes two translucent chart resources automatically:</p>
+          <ul>
+            <li><b>Chart datum</b> shows estimated bottom depth reduced to the configured datum.</li>
+            <li><b>Tide-adjusted now</b> colors conservative projected under-keel clearance using the latest fresh tide.</li>
+          </ul>
+          <p>Open Freeboard’s chart/layer selector and choose either “Local Bathymetry” resource. Disable it to return to the normal chart.</p>
+        </div>
+        <div class="legend" aria-label="Depth color legend">
+          <span>danger / dry</span><div></div><span>deeper</span>
+          <small><span id="danger-threshold">Configured under-keel danger</span>. Gray stippling means lower confidence; magenta borders indicate possible change.</small>
+        </div>
+      </section>
+
+      <section class="panel status">
+        <h2>Capture</h2>
+        <dl>
+          <dt>State</dt><dd id="capture-state">Loading…</dd>
+          <dt>Last sample</dt><dd id="last-sample">—</dd>
+          <dt>Current tide</dt><dd id="tide">—</dd>
+          <dt>Last error</dt><dd id="error">None</dd>
+        </dl>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
