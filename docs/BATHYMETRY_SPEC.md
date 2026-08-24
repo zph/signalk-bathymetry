@@ -602,13 +602,17 @@ decimal precision; values at or above 10 omit decimals. Every displayed value is
 rounded down at its shown precision so the label never overstates available depth.
 
 At overview zooms the raster surface uses world-aligned, power-of-two coarser
-hexes sized to remain approximately 32 screen pixels wide below zoom 19, while
-zoom 19 and above retain native source cells. Each overview
+hexes sized to remain approximately 64 screen pixels wide below zoom 19. Zoom
+19 uses a doubled native cell for the 0.01 NM view, while zoom 20 retains native
+source cells. Each overview
 hex is controlled by the shallowest QC-accepted conservative source cell in its
 bin; it is never colored from a mean depth. The aggregate confidence is capped
 by the square root of measured fine-cell coverage, causing sparse overview cells
-to retain the low-confidence stipple. Coarse cell size is capped at 320 m to
+to retain the low-confidence stipple. Coarse cell size is capped at 640 m to
 limit footprint exaggeration and is returned in the tile response headers.
+Depth labels are painted last on a small rounded, high-opacity
+plate using the cell's base color, keeping confidence hatching away from the
+number without hiding the confidence pattern across the rest of the cell.
 
 Rendered labels follow the Signal K server's resolved `depth` unit preference,
 queried from `/signalk/v1/unitpreferences/active` after startup and cached for

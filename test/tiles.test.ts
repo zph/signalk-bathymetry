@@ -25,13 +25,14 @@ test('depth labels conservatively round down at ten display units and above', ()
 })
 
 test('overview uses larger world-aligned hexes and the shallowest conservative cell', () => {
-  assert.equal(overviewCellMeters(5, 19), 5)
-  assert.equal(overviewCellMeters(5, 18), 20)
-  assert.equal(overviewCellMeters(5, 17), 40)
-  assert.equal(overviewCellMeters(5, 16), 80)
-  assert.equal(overviewCellMeters(5, 15), 160)
-  assert.equal(overviewCellMeters(5, 14), 320)
-  assert.equal(overviewCellMeters(5, 8), 320)
+  assert.equal(overviewCellMeters(5, 20), 5)
+  assert.equal(overviewCellMeters(5, 19), 10)
+  assert.equal(overviewCellMeters(5, 18), 40)
+  assert.equal(overviewCellMeters(5, 17), 80)
+  assert.equal(overviewCellMeters(5, 16), 160)
+  assert.equal(overviewCellMeters(5, 15), 320)
+  assert.equal(overviewCellMeters(5, 14), 640)
+  assert.equal(overviewCellMeters(5, 8), 640)
 
   const common: SurfaceCell = {
     cellX: 0,
@@ -88,7 +89,7 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
   const datum = noTide.render({ z: 16, x, y, layer: 'depth', mode: 'datum', atMs: Date.now() })
   assert.equal(datum.png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
   assert.ok(datum.cellCount >= 1)
-  assert.equal(datum.cellMeters, 80)
+  assert.equal(datum.cellMeters, 160)
   assert.equal(datum.labelCount, 0)
   assert.throws(
     () => noTide.render({ z: 16, x, y, layer: 'depth', mode: 'water', atMs: Date.now() }),

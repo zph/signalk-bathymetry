@@ -12,8 +12,8 @@ import type { BathymetryStore } from './store'
 import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
 const TILE_SIZE = 256
-const OVERVIEW_TARGET_PIXELS = 32
-const OVERVIEW_MAX_CELL_METERS = 320
+const OVERVIEW_TARGET_PIXELS = 64
+const OVERVIEW_MAX_CELL_METERS = 640
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
 export type DepthMode = 'datum' | 'water'
@@ -189,11 +189,16 @@ export class TileRenderer {
     const text = formatDepth(depthM * units.metersToDisplayFactor, units.decimals)
     const availableWidth = (cellMeters / span) * TILE_SIZE
     const zoomSteps = Math.max(0, options.z - this.config.depthLabelMinZoom)
-    let scale = Math.min(4, 2 ** zoomSteps)
-    while (scale > 1 && bitmapTextWidth(text, scale) > availableWidth) scale -= 1
-    const labelWidth = (text.length * 4 - 1) * scale
+    const overviewScale = Math.max(1, Math.round(cellMeters / this.config.baseCellMeters))
+    let scale = Math.min(4, 2 ** zoomSteps * overviewScale)
+    let padding = scale + 1
+    while (scale > 1 && bitmapTextWidth(text, scale) + 2 * padding > availableWidth) {
+      scale -= 1
+      padding = scale + 1
+    }
+    const labelWidth = bitmapTextWidth(text, scale)
     const labelHeight = 5 * scale
-    if (labelWidth > availableWidth) return false
+    if (labelWidth + 2 * padding > availableWidth) return false
 
     // A label whose center falls just outside this XYZ tile still needs its visible
     // fragment painted here. Rendering the same world-aligned glyph in both tiles
@@ -210,7 +215,18 @@ export class TileRenderer {
     }
 
     const fill = this.colorForCell(cell, options, projection)
-    paintBitmapText(rgba, text, Math.round(centerX), Math.round(centerY), scale, contrastText(fill))
+    const labelCenterX = Math.round(centerX)
+    const labelCenterY = Math.round(centerY)
+    paintLabelPlate(
+      rgba,
+      labelCenterX,
+      labelCenterY,
+      labelWidth + 2 * padding,
+      labelHeight + 2 * padding,
+      Math.max(2, scale),
+      [fill[0], fill[1], fill[2], Math.max(225, fill[3])]
+    )
+    paintBitmapText(rgba, text, labelCenterX, labelCenterY, scale, contrastText(fill))
     return true
   }
 
@@ -247,9 +263,10 @@ export class TileRenderer {
 }
 
 export function overviewCellMeters(baseCellMeters: number, zoom: number): number {
-  // Preserve the native survey grid and depth labels at close range. Below z19,
-  // remain visible around Freeboard's larger vessel icon.
-  if (zoom >= 19) return baseCellMeters
+  if (zoom >= 20) return baseCellMeters
+  // At z19, double the native cell without jumping all the way to the far-view
+  // target. This makes the 0.01 NM view legible while preserving local detail.
+  if (zoom === 19) return Math.min(OVERVIEW_MAX_CELL_METERS, baseCellMeters * 2)
   const metersPerPixel = (2 * WEB_MERCATOR_LIMIT) / (2 ** zoom * TILE_SIZE)
   const requiredMeters = metersPerPixel * OVERVIEW_TARGET_PIXELS
   if (requiredMeters <= baseCellMeters) return baseCellMeters
@@ -528,6 +545,33 @@ function contrastText(background: Rgba): Rgba {
   const perceivedBrightness =
     (background[0] * 299 + background[1] * 587 + background[2] * 114) / 1000
   return perceivedBrightness >= 125 ? [12, 22, 32, 255] : [255, 255, 255, 255]
+}
+
+function paintLabelPlate(
+  rgba: Uint8Array,
+  centerX: number,
+  centerY: number,
+  width: number,
+  height: number,
+  radius: number,
+  color: Rgba
+): void {
+  const left = Math.round(centerX - width / 2)
+  const top = Math.round(centerY - height / 2)
+  const right = left + width - 1
+  const bottom = top + height - 1
+  for (let y = top; y <= bottom; y += 1) {
+    for (let x = left; x <= right; x += 1) {
+      const insetX = Math.min(x - left, right - x)
+      const insetY = Math.min(y - top, bottom - y)
+      if (insetX < radius && insetY < radius) {
+        const deltaX = radius - insetX - 0.5
+        const deltaY = radius - insetY - 0.5
+        if (Math.hypot(deltaX, deltaY) > radius) continue
+      }
+      setPixel(rgba, x, y, color)
+    }
+  }
 }
 
 function paintBitmapText(
