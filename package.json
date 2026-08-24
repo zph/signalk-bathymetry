@@ -1,6 +1,6 @@
 {
   "name": "signalk-bathymetry",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "Source-aware local bathymetry, confidence surfaces, and Freeboard-SK overlays for Signal K",
   "license": "MIT",
   "main": "dist/index.js",
@@ -32,7 +32,10 @@
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
     "displayName": "Local Bathymetry",
-    "webapp": "./public"
+    "webapp": "./public",
+    "recommends": [
+      "@signalk/charts-plugin"
+    ]
   },
   "repository": {
     "type": "git",

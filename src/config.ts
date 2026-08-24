@@ -29,6 +29,7 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   changeMinimumPasses: 3,
   changeMinimumDays: 2,
   overlayOpacity: 0.55,
+  qcBaseChart: 'noaa-enc',
   showDepthLabels: true,
   depthLabelMinZoom: 19,
   minZoom: 8,
@@ -61,6 +62,10 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     DEFAULT_CONFIG.dangerUnderKeelM
   )
   config.overlayOpacity = clamp(config.overlayOpacity, 0, 1)
+  config.qcBaseChart =
+    typeof config.qcBaseChart === 'string'
+      ? config.qcBaseChart.trim()
+      : DEFAULT_CONFIG.qcBaseChart
   config.showDepthLabels =
     typeof config.showDepthLabels === 'boolean'
       ? config.showDepthLabels
@@ -176,6 +181,11 @@ export function pluginSchema(): object {
       ),
       recencyHalfLifeDays: numberField('Confidence half-life (days)', 1, 36500, 1, 365),
       overlayOpacity: numberField('Freeboard overlay opacity', 0, 1, 0.05, 0.55),
+      qcBaseChart: {
+        type: 'string',
+        title: 'QC map backing chart id or name (blank for automatic NOAA ENC)',
+        default: DEFAULT_CONFIG.qcBaseChart
+      },
       showDepthLabels: {
         type: 'boolean',
         title: 'Show depth numbers inside hex cells at high zoom',

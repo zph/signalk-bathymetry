@@ -223,7 +223,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.2.7' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.3.0' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
@@ -262,8 +262,11 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     dangerUnderKeelM: config.dangerUnderKeelM,
     recencyHalfLifeDays: config.recencyHalfLifeDays,
     overlayOpacity: config.overlayOpacity,
+    qcBaseChart: config.qcBaseChart,
     showDepthLabels: config.showDepthLabels,
     depthLabelMinZoom: config.depthLabelMinZoom,
+    minZoom: config.minZoom,
+    maxZoom: config.maxZoom,
     autoBackfillWhenEmpty: config.autoBackfillWhenEmpty,
     autoBackfillDays: config.autoBackfillDays
   }

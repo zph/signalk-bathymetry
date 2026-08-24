@@ -3,47 +3,176 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Local Bathymetry</title>
+    <meta name="theme-color" content="#071419" />
+    <title>Local Bathymetry · Quality Control</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main>
-      <header>
-        <p class="eyebrow">Signal K · supplemental navigation</p>
-        <h1>Local Bathymetry</h1>
-        <p class="warning">Not for primary navigation. Always defer to official charts and observed conditions.</p>
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">Signal K · local evidence</p>
+          <h1>Bathymetry quality control</h1>
+          <p class="lede">See what supports each depth, how recently it was measured, and where the model is uncertain or changing.</p>
+        </div>
+        <div class="live-state">
+          <span class="pulse" aria-hidden="true"></span>
+          <span id="capture-state">Connecting…</span>
+        </div>
       </header>
 
-      <section class="cards" aria-live="polite">
-        <article><span>Source samples</span><strong id="soundings">—</strong></article>
-        <article><span>Surface cells</span><strong id="cells">—</strong></article>
-        <article><span>Stored records</span><strong id="accepted">—</strong></article>
-        <article><span>Datum</span><strong id="datum">—</strong></article>
+      <p class="warning"><strong>Supplemental data only.</strong> This surface and the NOAA chart display are not a substitute for official navigation products or observed conditions.</p>
+
+      <section class="summary" aria-label="Dataset summary" aria-live="polite">
+        <article><span>Source samples</span><strong id="source-samples">—</strong><small id="source-note">Raw measurement evidence</small></article>
+        <article><span>Stored observations</span><strong id="stored-records">—</strong><small id="accepted-note">—</small></article>
+        <article><span>Surface cells</span><strong id="cell-count">—</strong><small id="cell-note">—</small></article>
+        <article><span>Newest evidence</span><strong id="latest-age">—</strong><small id="latest-at">—</small></article>
       </section>
 
-      <section class="panel">
-        <div>
-          <h2>Freeboard overlays</h2>
-          <p>The plugin publishes two translucent chart resources automatically:</p>
-          <ul>
-            <li><b>Chart datum</b> shows estimated bottom depth reduced to the configured datum.</li>
-            <li><b>Tide-adjusted now</b> colors conservative projected under-keel clearance using the latest fresh tide.</li>
-          </ul>
-          <p>Open Freeboard’s chart/layer selector and choose either “Local Bathymetry” resource. Disable it to return to the normal chart.</p>
+      <section class="workspace" aria-label="Bathymetry map and inspection details">
+        <div class="map-shell">
+          <div class="map-toolbar">
+            <label>
+              <span>Backing chart</span>
+              <select id="base-chart" aria-label="Backing chart">
+                <option>Discovering Signal K charts…</option>
+              </select>
+            </label>
+            <label>
+              <span>QC view</span>
+              <select id="qc-layer" aria-label="Bathymetry quality-control view">
+                <option value="depth">Depth + confidence</option>
+                <option value="confidence">Confidence</option>
+                <option value="age">Recency</option>
+                <option value="change">Change detection</option>
+              </select>
+            </label>
+            <label id="depth-mode-field">
+              <span>Depth reference</span>
+              <select id="depth-mode" aria-label="Depth reference">
+                <option value="datum">Chart datum</option>
+                <option value="water">Tide-adjusted now</option>
+              </select>
+            </label>
+            <label class="opacity-field">
+              <span>Overlay <output id="opacity-output">70%</output></span>
+              <input id="overlay-opacity" type="range" min="0" max="1" step="0.05" value="0.7" />
+            </label>
+          </div>
+
+          <div id="map" class="map" tabindex="0" role="application" aria-label="Interactive bathymetry quality-control map. Drag to pan, use the wheel or plus and minus buttons to zoom, and click a measured cell to inspect it.">
+            <div id="base-tiles" class="tile-pane base-tiles" aria-hidden="true"></div>
+            <div id="bathy-tiles" class="tile-pane bathy-tiles" aria-hidden="true"></div>
+            <svg id="map-annotations" class="map-annotations" aria-hidden="true">
+              <polygon id="selected-cell" points=""></polygon>
+            </svg>
+            <div id="boat-marker" class="boat-marker" aria-label="Vessel position">
+              <span></span>
+            </div>
+            <div class="zoom-controls" aria-label="Map zoom controls">
+              <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+              <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+            </div>
+            <button id="center-boat" class="center-boat" type="button"><span aria-hidden="true">⌖</span> Center boat</button>
+            <div id="map-message" class="map-message" role="status">Loading chart and vessel position…</div>
+            <div class="attribution">Charts via Signal K · <a href="https://www.nauticalcharts.noaa.gov/" target="_blank" rel="noreferrer">NOAA Office of Coast Survey</a></div>
+          </div>
+
+          <div class="map-footer">
+            <div>
+              <span class="status-dot" id="chart-dot"></span>
+              <span id="chart-status">Discovering backing charts…</span>
+            </div>
+            <div id="map-position">—</div>
+            <div>Zoom <strong id="zoom-level">18</strong></div>
+          </div>
         </div>
-        <div class="legend" aria-label="Depth color legend">
-          <span>danger / dry</span><div></div><span>deeper</span>
-          <small><span id="danger-threshold">Configured under-keel danger</span>. Gray stippling means lower confidence; magenta borders indicate possible change.</small>
+
+        <aside class="inspector" aria-live="polite">
+          <div id="inspection-empty" class="empty-state">
+            <span class="hex-icon" aria-hidden="true"></span>
+            <h2>Inspect a measured cell</h2>
+            <p>Click a bathymetry hex to see its samples, passes, sources, age, uncertainty, and QC decisions.</p>
+          </div>
+
+          <div id="inspection-detail" class="inspection-detail" hidden>
+            <div class="inspection-heading">
+              <div>
+                <p class="eyebrow">Selected hex</p>
+                <h2 id="cell-depth">—</h2>
+                <p id="cell-coordinate" class="coordinate">—</p>
+              </div>
+              <span id="cell-state" class="state-badge">—</span>
+            </div>
+
+            <div id="cell-flags" class="flags" aria-label="Cell quality flags"></div>
+
+            <dl class="cell-metrics">
+              <div><dt>Confidence</dt><dd id="cell-confidence">—</dd></div>
+              <div><dt>Newest evidence</dt><dd id="cell-age">—</dd></div>
+              <div><dt>Vertical uncertainty</dt><dd id="cell-sigma">—</dd></div>
+              <div><dt>Conservative depth</dt><dd id="cell-conservative">—</dd></div>
+              <div><dt>Source samples</dt><dd id="cell-samples">—</dd></div>
+              <div><dt>Observations</dt><dd id="cell-observations">—</dd></div>
+              <div><dt>Independent passes</dt><dd id="cell-passes">—</dd></div>
+              <div><dt>Depth sources</dt><dd id="cell-sources">—</dd></div>
+            </dl>
+
+            <div class="age-range">
+              <span>Evidence range</span>
+              <strong id="cell-range">—</strong>
+            </div>
+
+            <section class="evidence-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Contributing evidence</h3>
+                  <p id="evidence-summary">Loading…</p>
+                </div>
+              </div>
+              <div id="evidence-list" class="evidence-list"></div>
+            </section>
+          </div>
+        </aside>
+      </section>
+
+      <section class="qc-overview panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Surface audit</p>
+            <h2>Where to look first</h2>
+          </div>
+          <span id="audit-updated">—</span>
+        </div>
+        <div id="audit-cards" class="audit-cards">
+          <article><strong>—</strong><span>Loading quality indicators…</span></article>
+        </div>
+        <div class="confidence-explainer">
+          <div>
+            <h3>Confidence is evidence, not a vote count</h3>
+            <p>It combines measurement uncertainty, repeatability within and between visits, independent passes, source diversity, and recency. Repeated stationary pings are consolidated so they cannot manufacture false confidence.</p>
+          </div>
+          <div class="legend" id="layer-legend" aria-label="Selected layer legend">
+            <span id="legend-low">Danger / dry</span>
+            <div id="legend-gradient"></div>
+            <span id="legend-high">Deeper</span>
+            <small id="legend-note">Gray hatching marks confidence below 55%; magenta outlines mark possible seabed change.</small>
+          </div>
         </div>
       </section>
 
-      <section class="panel status">
-        <h2>Capture</h2>
+      <section class="panel system-status">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Ingestion</p>
+            <h2>Capture status</h2>
+          </div>
+        </div>
         <dl>
-          <dt>State</dt><dd id="capture-state">Loading…</dd>
-          <dt>Last sample</dt><dd id="last-sample">—</dd>
           <dt>Current tide</dt><dd id="tide">—</dd>
           <dt>Auto backfill</dt><dd id="auto-backfill">—</dd>
+          <dt>Stationary spikes excluded</dt><dd id="stationary-rejected">—</dd>
           <dt>Last error</dt><dd id="error">None</dd>
         </dl>
       </section>
