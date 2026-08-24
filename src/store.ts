@@ -766,7 +766,7 @@ export class BathymetryStore {
       const localDepthM = median(neighborDepths)
       const neighborSpreadM = robustSigma(neighborDepths)
       const deltaM = Math.abs(cell.robustDepthM - localDepthM)
-      const toleranceM = Math.max(this.config.outlierFloorM * 1.5, neighborSpreadM * 2.5)
+      const toleranceM = Math.max(this.config.outlierFloorM * 1.5, neighborSpreadM * 1.5)
       result.neighborDepthDeltaM = deltaM
       if (deltaM <= toleranceM) return result
 
