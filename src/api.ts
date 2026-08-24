@@ -159,7 +159,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
       const unitStatus = runtime.depthUnits.status()
-      const etag = `W/\"hex5-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelMinZoom}-${unitStatus.revision}\"`
+      const etag = `W/\"hex7-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelMinZoom}-${unitStatus.revision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
@@ -174,6 +174,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       )
       response.set('ETag', etag)
       response.set('X-Bathymetry-Cell-Count', String(rendered.cellCount))
+      response.set('X-Bathymetry-Cell-Meters', String(rendered.cellMeters))
       response.set('X-Bathymetry-Label-Count', String(rendered.labelCount))
       response.set('X-Bathymetry-Depth-Unit', unitStatus.symbol)
       if (rendered.projection) {
@@ -222,7 +223,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.2.3' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.2.4' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },

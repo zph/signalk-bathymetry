@@ -100,6 +100,14 @@ The measured swath perimeter and change outlines use anti-aliased geometric
 strokes rather than pixel-traced borders. Gray stippling marks lower confidence and
 magenta cell borders mark a suspected or confirmed change.
 
+When zooming out below level 18, the renderer uses a world-aligned overview
+pyramid instead of letting 5 m cells disappear below one pixel. Overview hexes
+grow from 10 m at zoom 18 to 160 m at zoom 14, with a 320 m safety cap. Their
+depth/clearance color is controlled by the shallowest accepted conservative
+source cell, never an average. Sparse source coverage lowers overview confidence
+and activates the gray stipple so a large abstracted hex is not presented as a
+fully surveyed area. `X-Bathymetry-Cell-Meters` reports the rendered resolution.
+
 The plugin reads Signal K's resolved `depth` unit preference once after startup,
 caches it in plugin data, and converts only the rendered numbers. Storage, QC,
 API fields, and safety settings remain SI meters. For a tide-adjusted overlay

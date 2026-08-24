@@ -601,6 +601,15 @@ across tile seams. Values below 10 in the resolved display unit retain the unit'
 decimal precision; values at or above 10 omit decimals. Every displayed value is
 rounded down at its shown precision so the label never overstates available depth.
 
+At overview zooms the raster surface uses world-aligned, power-of-two coarser
+hexes sized to remain at least ten screen pixels wide (normally about 16 after
+power-of-two selection). Each overview
+hex is controlled by the shallowest QC-accepted conservative source cell in its
+bin; it is never colored from a mean depth. The aggregate confidence is capped
+by the square root of measured fine-cell coverage, causing sparse overview cells
+to retain the low-confidence stipple. Coarse cell size is capped at 320 m to
+limit footprint exaggeration and is returned in the tile response headers.
+
 Rendered labels follow the Signal K server's resolved `depth` unit preference,
 queried from `/signalk/v1/unitpreferences/active` after startup and cached for
 restart/failure fallback. All persisted measurements, QC calculations, API

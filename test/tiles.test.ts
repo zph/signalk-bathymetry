@@ -5,9 +5,16 @@ import test from 'node:test'
 import { normalizeConfig } from '../src/config'
 import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
-import { formatDepth, ProjectionUnavailableError, TileRenderer } from '../src/tiles'
+import {
+  aggregateOverviewCells,
+  formatDepth,
+  overviewCellMeters,
+  ProjectionUnavailableError,
+  TileRenderer
+} from '../src/tiles'
 import { sounding } from './helpers'
 import { METRIC_DEPTH_UNITS, type DepthDisplayUnits } from '../src/depth-units'
+import type { SurfaceCell } from '../src/types'
 
 test('depth labels conservatively round down at ten display units and above', () => {
   assert.equal(formatDepth(9.89, 1), '9.8')
@@ -15,6 +22,47 @@ test('depth labels conservatively round down at ten display units and above', ()
   assert.equal(formatDepth(10.9, 1), '10')
   assert.equal(formatDepth(-1.21, 1), '-1.3')
   assert.equal(formatDepth(-12.4, 1), '-13')
+})
+
+test('overview uses larger world-aligned hexes and the shallowest conservative cell', () => {
+  assert.equal(overviewCellMeters(5, 19), 5)
+  assert.equal(overviewCellMeters(5, 18), 10)
+  assert.equal(overviewCellMeters(5, 17), 20)
+  assert.equal(overviewCellMeters(5, 16), 40)
+  assert.equal(overviewCellMeters(5, 14), 160)
+  assert.equal(overviewCellMeters(5, 8), 320)
+
+  const common: SurfaceCell = {
+    cellX: 0,
+    cellY: 0,
+    datum: 'MLLW',
+    robustDepthM: 5,
+    renderDepthM: 5,
+    conservativeDepthM: 4.5,
+    verticalSigmaM: 0.3,
+    confidence: 0.9,
+    soundingCount: 2,
+    observationCount: 2,
+    passCount: 1,
+    sourceCount: 1,
+    oldestAtMs: 1,
+    newestAtMs: 2,
+    changeState: 'stable',
+    updatedAtMs: 2
+  }
+  const shallow: SurfaceCell = {
+    ...common,
+    cellX: 1,
+    conservativeDepthM: 3.2,
+    soundingCount: 3,
+    observationCount: 3,
+    newestAtMs: 3
+  }
+  const overview = aggregateOverviewCells([common, shallow], 5, 20, 'datum', undefined)
+  assert.equal(overview.length, 1)
+  assert.equal(overview[0]?.conservativeDepthM, 3.2)
+  assert.equal(overview[0]?.soundingCount, 5)
+  assert.ok((overview[0]?.confidence ?? 1) < 0.55)
 })
 
 test('renderer emits joined hex PNG tiles, labels depth, and requires fresh projected tide', (t) => {
@@ -39,6 +87,7 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
   const datum = noTide.render({ z: 16, x, y, layer: 'depth', mode: 'datum', atMs: Date.now() })
   assert.equal(datum.png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
   assert.ok(datum.cellCount >= 1)
+  assert.equal(datum.cellMeters, 40)
   assert.equal(datum.labelCount, 0)
   assert.throws(
     () => noTide.render({ z: 16, x, y, layer: 'depth', mode: 'water', atMs: Date.now() }),

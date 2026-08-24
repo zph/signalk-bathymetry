@@ -1,10 +1,19 @@
-import { bboxToCellRange, hexCellCenter, hexCellVertices, tileMercatorBounds } from './geo'
+import {
+  bboxToCellRange,
+  hexCellCenter,
+  hexCellForMercator,
+  hexCellVertices,
+  tileMercatorBounds,
+  WEB_MERCATOR_LIMIT
+} from './geo'
 import { encodeRgbaPng } from './png'
 import type { DepthDisplayUnits } from './depth-units'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
 const TILE_SIZE = 256
+const OVERVIEW_TARGET_PIXELS = 10
+const OVERVIEW_MAX_CELL_METERS = 320
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
 export type DepthMode = 'datum' | 'water'
@@ -14,6 +23,7 @@ export class ProjectionUnavailableError extends Error {}
 export interface RenderedTile {
   png: Buffer
   cellCount: number
+  cellMeters: number
   labelCount: number
   projection?: TideProjection
 }
@@ -35,18 +45,16 @@ export class TileRenderer {
     atMs: number
   }): RenderedTile {
     const rgba = new Uint8Array(TILE_SIZE * TILE_SIZE * 4)
+    const cellMeters = overviewCellMeters(this.config.baseCellMeters, options.z)
     if (options.z < this.config.minZoom || options.z > this.config.maxZoom) {
-      return { png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba), cellCount: 0, labelCount: 0 }
+      return {
+        png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba),
+        cellCount: 0,
+        cellMeters,
+        labelCount: 0
+      }
     }
     const bounds = tileMercatorBounds(options.z, options.x, options.y)
-    const range = bboxToCellRange(bounds, this.config.baseCellMeters)
-    const cells = this.store.getCellsInRange(
-      range.minCellX,
-      range.minCellY,
-      range.maxCellX,
-      range.maxCellY,
-      this.config.targetDatum
-    )
     let projection: TideProjection | undefined
     if (options.mode === 'water') {
       projection = this.getTide(options.atMs)
@@ -59,16 +67,42 @@ export class TileRenderer {
         )
       }
     }
+    // Include enough source-cell context to build the same world-aligned overview
+    // cell from either side of an XYZ tile seam.
+    const queryBounds =
+      cellMeters === this.config.baseCellMeters
+        ? bounds
+        : {
+            minX: bounds.minX - cellMeters,
+            minY: bounds.minY - cellMeters,
+            maxX: bounds.maxX + cellMeters,
+            maxY: bounds.maxY + cellMeters
+          }
+    const range = bboxToCellRange(queryBounds, this.config.baseCellMeters)
+    const sourceCells = this.store.getCellsInRange(
+      range.minCellX,
+      range.minCellY,
+      range.maxCellX,
+      range.maxCellY,
+      this.config.targetDatum
+    )
+    const cells = aggregateOverviewCells(
+      sourceCells,
+      this.config.baseCellMeters,
+      cellMeters,
+      options.mode,
+      projection
+    )
     const changedPolygons: PixelPoint[][] = []
     for (const cell of cells) {
-      const polygon = this.paintCell(rgba, cell, bounds, options, projection)
+      const polygon = this.paintCell(rgba, cell, bounds, cellMeters, options, projection)
       if (polygon && options.layer === 'depth' && cell.changeState !== 'stable') {
         changedPolygons.push(polygon)
       }
     }
     // All fills are painted before the perimeter. Stroke only exposed geometric
     // edges so adjacent hexes remain one swath and diagonals are anti-aliased.
-    paintOuterHexBoundary(rgba, cells, bounds, this.config.baseCellMeters, [25, 35, 45, 190])
+    paintOuterHexBoundary(rgba, cells, bounds, cellMeters, [25, 35, 45, 190])
     for (const polygon of changedPolygons) paintPolygonBorder(rgba, polygon, [220, 0, 170, 225])
 
     let labelCount = 0
@@ -78,12 +112,15 @@ export class TileRenderer {
       options.z >= this.config.depthLabelMinZoom
     ) {
       for (const cell of cells) {
-        if (this.paintDepthLabel(rgba, cell, bounds, options, projection)) labelCount += 1
+        if (this.paintDepthLabel(rgba, cell, bounds, cellMeters, options, projection)) {
+          labelCount += 1
+        }
       }
     }
     const result: RenderedTile = {
       png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba),
       cellCount: cells.length,
+      cellMeters,
       labelCount
     }
     if (projection) result.projection = projection
@@ -94,11 +131,12 @@ export class TileRenderer {
     rgba: Uint8Array,
     cell: SurfaceCell,
     bounds: ReturnType<typeof tileMercatorBounds>,
+    cellMeters: number,
     options: { layer: TileLayer; mode: DepthMode; atMs: number },
     projection: TideProjection | undefined
   ): PixelPoint[] | undefined {
     const span = bounds.maxX - bounds.minX
-    const polygon = hexCellVertices(cell.cellX, cell.cellY, this.config.baseCellMeters).map(
+    const polygon = hexCellVertices(cell.cellX, cell.cellY, cellMeters).map(
       (vertex) => ({
         x: ((vertex.x - bounds.minX) / span) * TILE_SIZE,
         y: ((bounds.maxY - vertex.y) / span) * TILE_SIZE
@@ -132,10 +170,11 @@ export class TileRenderer {
     rgba: Uint8Array,
     cell: SurfaceCell,
     bounds: ReturnType<typeof tileMercatorBounds>,
+    cellMeters: number,
     options: { z: number; layer: TileLayer; mode: DepthMode; atMs: number },
     projection: TideProjection | undefined
   ): boolean {
-    const center = hexCellCenter(cell.cellX, cell.cellY, this.config.baseCellMeters)
+    const center = hexCellCenter(cell.cellX, cell.cellY, cellMeters)
     const span = bounds.maxX - bounds.minX
     const centerX = ((center.x - bounds.minX) / span) * TILE_SIZE
     const centerY = ((bounds.maxY - center.y) / span) * TILE_SIZE
@@ -148,7 +187,7 @@ export class TileRenderer {
       : cell.conservativeDepthM
     const units = this.getDepthUnits()
     const text = formatDepth(depthM * units.metersToDisplayFactor, units.decimals)
-    const availableWidth = (this.config.baseCellMeters / span) * TILE_SIZE
+    const availableWidth = (cellMeters / span) * TILE_SIZE
     const zoomSteps = Math.max(0, options.z - this.config.depthLabelMinZoom)
     let scale = Math.min(4, 2 ** zoomSteps)
     while (scale > 1 && bitmapTextWidth(text, scale) > availableWidth) scale -= 1
@@ -205,6 +244,80 @@ export class TileRenderer {
     const requiredWaterDepthM = this.config.surfaceToKeelM + this.config.dangerUnderKeelM
     return [...depthColor(cell.conservativeDepthM, requiredWaterDepthM), alpha] as Rgba
   }
+}
+
+export function overviewCellMeters(baseCellMeters: number, zoom: number): number {
+  const metersPerPixel = (2 * WEB_MERCATOR_LIMIT) / (2 ** zoom * TILE_SIZE)
+  const requiredMeters = metersPerPixel * OVERVIEW_TARGET_PIXELS
+  if (requiredMeters <= baseCellMeters) return baseCellMeters
+  const scale = 2 ** Math.ceil(Math.log2(requiredMeters / baseCellMeters))
+  return Math.min(OVERVIEW_MAX_CELL_METERS, baseCellMeters * scale)
+}
+
+export function aggregateOverviewCells(
+  cells: readonly SurfaceCell[],
+  baseCellMeters: number,
+  displayCellMeters: number,
+  mode: DepthMode,
+  projection: TideProjection | undefined
+): SurfaceCell[] {
+  if (displayCellMeters <= baseCellMeters) return [...cells]
+  const groups = new Map<string, { cellX: number; cellY: number; members: SurfaceCell[] }>()
+  for (const cell of cells) {
+    const center = hexCellCenter(cell.cellX, cell.cellY, baseCellMeters)
+    const parent = hexCellForMercator(center.x, center.y, displayCellMeters)
+    const key = `${parent.x}:${parent.y}`
+    let group = groups.get(key)
+    if (!group) {
+      group = { cellX: parent.x, cellY: parent.y, members: [] }
+      groups.set(key, group)
+    }
+    group.members.push(cell)
+  }
+
+  const expectedSourceCells = (displayCellMeters / baseCellMeters) ** 2
+  return [...groups.values()].map((group) => {
+    const controlling = group.members.reduce((shallowest, candidate) =>
+      overviewDepth(candidate, mode, projection) < overviewDepth(shallowest, mode, projection)
+        ? candidate
+        : shallowest
+    )
+    const coverageConfidence = Math.sqrt(
+      Math.min(1, group.members.length / expectedSourceCells)
+    )
+    return {
+      ...controlling,
+      cellX: group.cellX,
+      cellY: group.cellY,
+      confidence: Math.min(controlling.confidence, coverageConfidence),
+      soundingCount: group.members.reduce((total, cell) => total + cell.soundingCount, 0),
+      observationCount: group.members.reduce((total, cell) => total + cell.observationCount, 0),
+      passCount: Math.max(...group.members.map((cell) => cell.passCount)),
+      sourceCount: Math.max(...group.members.map((cell) => cell.sourceCount)),
+      oldestAtMs: Math.min(...group.members.map((cell) => cell.oldestAtMs)),
+      newestAtMs: controlling.newestAtMs,
+      changeState: aggregateChangeState(group.members),
+      updatedAtMs: Math.max(...group.members.map((cell) => cell.updatedAtMs))
+    }
+  })
+}
+
+function overviewDepth(
+  cell: SurfaceCell,
+  mode: DepthMode,
+  projection: TideProjection | undefined
+): number {
+  if (mode !== 'water' || !projection) return cell.conservativeDepthM
+  const sigma = Math.sqrt(cell.verticalSigmaM ** 2 + projection.sigmaM ** 2)
+  return cell.renderDepthM + projection.heightM - 1.645 * sigma
+}
+
+function aggregateChangeState(cells: readonly SurfaceCell[]): SurfaceCell['changeState'] {
+  const states = new Set(cells.map((cell) => cell.changeState))
+  if (states.has('confirmed')) return 'confirmed'
+  if (states.has('suspected_shoaling')) return 'suspected_shoaling'
+  if (states.has('candidate_deepening')) return 'candidate_deepening'
+  return 'stable'
 }
 
 type Rgb = [number, number, number]
