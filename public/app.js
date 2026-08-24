@@ -411,8 +411,10 @@ async function loadCellEvidence(cell) {
 }
 
 function evidenceRow(item) {
-  const row = document.createElement('article')
+  const row = document.createElement('button')
+  row.type = 'button'
   row.className = 'evidence-row'
+  row.setAttribute('aria-label', `Open measurement from ${new Date(item.observedAt).toLocaleString()}`)
   const time = document.createElement('span')
   time.className = 'time'
   time.textContent = new Date(item.observedAt).toLocaleString()
@@ -430,7 +432,66 @@ function evidenceRow(item) {
   qc.className = `qc-pill ${item.qcState}`
   qc.textContent = item.qcState
   row.append(time, depth, meta, qc)
+  row.addEventListener('click', () => openMeasurement(item))
   return row
+}
+
+function openMeasurement(item) {
+  const modal = byId('measurement-modal')
+  byId('measurement-title').textContent = `${formatDepth(item.datumDepthM)} ${depthSymbol()} at ${item.datum}`
+  byId('measurement-subtitle').textContent = new Date(item.observedAt).toLocaleString()
+  const flags = [
+    [item.qcState, item.qcState === 'accepted' ? 'good' : 'danger'],
+    [item.origin, ''],
+    [String(item.aggregationKind || 'point').replaceAll('_', ' '), '']
+  ]
+  byId('measurement-flags').replaceChildren(...flags.map(([label, tone]) => {
+    const flag = document.createElement('span')
+    flag.className = `flag ${tone}`
+    flag.textContent = label
+    return flag
+  }))
+
+  const position = item.position
+    ? `${Number(item.position.latitude).toFixed(7)}, ${Number(item.position.longitude).toFixed(7)}`
+    : 'Unavailable'
+  const details = [
+    ['Observed', new Date(item.observedAt).toLocaleString()],
+    ['Raw sensor depth', `${formatDepth(item.rawDepthM)} ${depthSymbol()} · ${friendlyDepthReference(item.depthReference)}`],
+    ['Datum-reduced depth', `${formatDepth(item.datumDepthM)} ${depthSymbol()} · ${item.datum}`],
+    ['Vertical uncertainty', `±${formatDepth(item.verticalSigmaM)} ${depthSymbol()} (1σ)`],
+    ['Position', position],
+    ['Position source', item.positionSource],
+    ['Depth source', item.depthSource],
+    ['Tide correction', `${formatDepth(item.tideHeightM)} ${depthSymbol()} · ${item.tideStationName}`],
+    ['Tide station id', item.tideStationId],
+    ['Origin / context', `${item.origin} · ${item.context}`],
+    ['Aggregation', String(item.aggregationKind || 'point').replaceAll('_', ' ')],
+    ['Source samples', number(item.sampleCount || 1)],
+    ['Spikes excluded', number(item.rejectedSampleCount || 0)],
+    ['Window', `${new Date(item.windowStart).toLocaleString()} – ${new Date(item.windowEnd).toLocaleString()}`],
+    ['Pass id', item.passId],
+    ['QC decision', item.qcState],
+    ['QC reasons', item.qcReasons?.length ? item.qcReasons.join(', ') : 'None'],
+    ['Record id', String(item.id)]
+  ]
+  const detailList = byId('measurement-details')
+  detailList.replaceChildren(...details.flatMap(([label, value]) => {
+    const term = document.createElement('dt')
+    term.textContent = label
+    const definition = document.createElement('dd')
+    definition.textContent = value ?? 'Unavailable'
+    return [term, definition]
+  }))
+  if (!modal.open) modal.showModal()
+}
+
+function friendlyDepthReference(value) {
+  return {
+    belowKeel: 'below keel',
+    belowSurface: 'below surface',
+    belowTransducer: 'below transducer'
+  }[value] || String(value || 'unknown')
 }
 
 function pointInPolygon(position, polygon) {
@@ -625,6 +686,11 @@ function configureControls() {
     state.opacity = Number(elements.opacity.value)
     elements.opacityOutput.textContent = `${Math.round(state.opacity * 100)}%`
     elements.bathyTiles.style.opacity = String(state.opacity)
+  })
+  const modal = byId('measurement-modal')
+  byId('measurement-close').addEventListener('click', () => modal.close())
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) modal.close()
   })
 }
 
