@@ -12,10 +12,13 @@ import type { CaptureEngine } from './capture'
 import type { HistoryBackfill } from './history-backfill'
 import type { AutoBackfill } from './auto-backfill'
 import type { BathymetryConfig, QcState, SurfaceCell } from './types'
+import type { DepthUnitPreferences } from './depth-units'
+import { INFO_LAYER_REFRESH_MS } from './info-layers'
 
 const EMPTY_TILE = encodeRgbaPng(256, 256, new Uint8Array(256 * 256 * 4))
 const TILE_LAYERS = new Set<TileLayer>(['depth', 'confidence', 'age', 'change'])
 const DEPTH_MODES = new Set<DepthMode>(['datum', 'water'])
+const CURRENT_TILE_CACHE_SECONDS = INFO_LAYER_REFRESH_MS / 1000
 
 export interface Runtime {
   config: BathymetryConfig
@@ -23,6 +26,7 @@ export interface Runtime {
   capture: CaptureEngine
   history: HistoryBackfill
   autoBackfill: AutoBackfill
+  depthUnits: DepthUnitPreferences
   renderer: TileRenderer
 }
 
@@ -40,6 +44,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       capture: runtime.capture.status(),
       history: { running: runtime.history.isRunning() },
       autoBackfill: runtime.autoBackfill.status(),
+      depthDisplayUnits: runtime.depthUnits.status(),
       store: runtime.store.stats()
     })
   })
@@ -151,18 +156,26 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       if (!TILE_LAYERS.has(layer)) throw new HttpError(400, 'Unknown tile layer')
       if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
       const atMs = optionalTime(request, 'at') ?? Date.now()
-      const tideBucket = mode === 'water' ? Math.floor(atMs / 60_000) : 0
-      const etag = `W/\"hex3-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelMinZoom}\"`
+      const tideBucket =
+        mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
+      const unitStatus = runtime.depthUnits.status()
+      const etag = `W/\"hex3-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelMinZoom}-${unitStatus.revision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
       }
       const rendered = runtime.renderer.render({ z, x, y, layer, mode, atMs })
       response.set('Content-Type', 'image/png')
-      response.set('Cache-Control', mode === 'water' ? 'private, max-age=30' : 'private, max-age=300')
+      response.set(
+        'Cache-Control',
+        mode === 'water'
+          ? `private, max-age=${CURRENT_TILE_CACHE_SECONDS}, must-revalidate`
+          : 'private, max-age=300'
+      )
       response.set('ETag', etag)
       response.set('X-Bathymetry-Cell-Count', String(rendered.cellCount))
       response.set('X-Bathymetry-Label-Count', String(rendered.labelCount))
+      response.set('X-Bathymetry-Depth-Unit', unitStatus.symbol)
       if (rendered.projection) {
         response.set('X-Bathymetry-Tide-Meters', String(rendered.projection.heightM))
       }
@@ -209,7 +222,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.2.0' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.2.1' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },

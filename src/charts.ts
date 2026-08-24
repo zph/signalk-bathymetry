@@ -1,30 +1,37 @@
 import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
+import { revisionFor, type DepthDisplayUnits } from './depth-units'
 
 const DATUM_ID = 'signalk-bathymetry-datum'
 const WATER_ID = 'signalk-bathymetry-water-now'
 
 export function createChartProvider(
   store: BathymetryStore,
-  config: BathymetryConfig
+  config: BathymetryConfig,
+  getDepthUnits: () => DepthDisplayUnits
 ): ResourceProvider {
-  const resources = (): Record<string, unknown> => ({
-    [DATUM_ID]: chartResource(
-      DATUM_ID,
-      `Local Bathymetry — ${config.targetDatum}`,
-      'datum',
-      store,
-      config
-    ),
-    [WATER_ID]: chartResource(
-      WATER_ID,
-      'Local Bathymetry — Tide-adjusted now',
-      'water',
-      store,
-      config
-    )
-  })
+  const resources = (): Record<string, unknown> => {
+    const units = getDepthUnits()
+    return {
+      [DATUM_ID]: chartResource(
+        DATUM_ID,
+        `Local Bathymetry — ${config.targetDatum} (${units.symbol})`,
+        'datum',
+        store,
+        config,
+        units
+      ),
+      [WATER_ID]: chartResource(
+        WATER_ID,
+        `Local Bathymetry — Tide-adjusted now (${units.symbol})`,
+        'water',
+        store,
+        config,
+        units
+      )
+    }
+  }
   return {
     type: 'charts',
     methods: {
@@ -52,17 +59,18 @@ function chartResource(
   name: string,
   mode: 'datum' | 'water',
   store: BathymetryStore,
-  config: BathymetryConfig
+  config: BathymetryConfig,
+  units: DepthDisplayUnits
 ): Record<string, unknown> {
   const bounds = expandedBounds(store.stats().bounds)
-  const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}`
+  const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}`
   return {
     identifier,
     name,
     description:
       mode === 'datum'
-        ? `Crowdsourced conservative depth below ${config.targetDatum}; not for primary navigation`
-        : `Estimated conservative water depth using the current ${config.targetDatum} tide; not for primary navigation`,
+        ? `Crowdsourced conservative depth below ${config.targetDatum}, labeled in ${units.symbol}; not for primary navigation`
+        : `Estimated conservative water depth using the current ${config.targetDatum} tide, labeled in ${units.symbol}; not for primary navigation`,
     type: 'tilelayer',
     format: 'png',
     chartFormat: 'png',

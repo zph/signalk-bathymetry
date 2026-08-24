@@ -595,6 +595,11 @@ safety signals. Depth labels are enabled independently and appear only above a
 configured minimum zoom; they show conservative datum depth in chart-datum mode
 and conservative tide-projected water depth in tide-adjusted mode.
 
+Rendered labels follow the Signal K server's resolved `depth` unit preference,
+queried from `/signalk/v1/unitpreferences/active` after startup and cached for
+restart/failure fallback. All persisted measurements, QC calculations, API
+values, and safety thresholds remain SI meters.
+
 ### 10.3 Freeboard-SK translucent overlay
 
 Yes: Freeboard-SK should be the primary map UI. It already discovers chart
@@ -611,6 +616,13 @@ Bathymetry contours / change warnings
 Translucent bathymetry color surface (default opacity 55%)
 Official chart or other selected Freeboard base chart
 ```
+
+Because Freeboard's normal chart XYZ source retains already-visible tiles in an
+in-memory cache, HTTP expiry alone does not guarantee a stationary open map will
+reload them. The plugin therefore also advertises matching XYZ information-layer
+resources with `refreshInterval: 600000`. Freeboard's information-layer timer
+calls the source refresh operation every 10 minutes, clearing its tile cache and
+re-requesting visible tide-adjusted tiles.
 
 The overlay has three mutually exclusive display states:
 

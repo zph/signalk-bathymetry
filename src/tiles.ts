@@ -1,5 +1,6 @@
 import { bboxToCellRange, hexCellCenter, hexCellVertices, tileMercatorBounds } from './geo'
 import { encodeRgbaPng } from './png'
+import type { DepthDisplayUnits } from './depth-units'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
@@ -21,7 +22,8 @@ export class TileRenderer {
   constructor(
     private readonly store: BathymetryStore,
     private readonly config: BathymetryConfig,
-    private readonly getTide: (atMs: number) => TideProjection | undefined
+    private readonly getTide: (atMs: number) => TideProjection | undefined,
+    private readonly getDepthUnits: () => DepthDisplayUnits
   ) {}
 
   render(options: {
@@ -145,11 +147,16 @@ export class TileRenderer {
     const depthM = projection
       ? cell.renderDepthM + projection.heightM - 1.645 * combinedSigma
       : cell.conservativeDepthM
-    const text = formatDepth(depthM)
-    const scale = options.z >= this.config.depthLabelMinZoom + 1 ? 2 : 1
-    const labelWidth = (text.length * 4 - 1) * scale
+    const units = this.getDepthUnits()
+    const text = formatDepth(depthM * units.metersToDisplayFactor, units.decimals)
     const availableWidth = (this.config.baseCellMeters / span) * TILE_SIZE
-    if (labelWidth + 4 * scale > availableWidth) return false
+    const preferredScale = options.z >= this.config.depthLabelMinZoom + 1 ? 2 : 1
+    const scale =
+      preferredScale === 2 && (text.length * 4 - 1) * 2 + 2 <= availableWidth
+        ? 2
+        : 1
+    const labelWidth = (text.length * 4 - 1) * scale
+    if (labelWidth + 2 > availableWidth) return false
     paintBitmapText(rgba, text, Math.round(centerX), Math.round(centerY), scale)
     return true
   }
@@ -334,8 +341,8 @@ const FONT: Readonly<Record<string, readonly string[]>> = {
   '-': ['000', '000', '111', '000', '000']
 }
 
-function formatDepth(depthM: number): string {
-  return Math.abs(depthM) < 100 ? depthM.toFixed(1) : String(Math.round(depthM))
+function formatDepth(depth: number, decimals: number): string {
+  return Math.abs(depth) < 100 ? depth.toFixed(decimals) : String(Math.round(depth))
 }
 
 function paintBitmapText(

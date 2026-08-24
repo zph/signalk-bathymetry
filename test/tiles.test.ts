@@ -7,6 +7,7 @@ import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
 import { ProjectionUnavailableError, TileRenderer } from '../src/tiles'
 import { sounding } from './helpers'
+import { METRIC_DEPTH_UNITS, type DepthDisplayUnits } from '../src/depth-units'
 
 test('renderer emits joined hex PNG tiles, labels depth, and requires fresh projected tide', (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-tile-test-'))
@@ -26,7 +27,7 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
   store.ingest([input])
   const { x, y } = webTile(input.latitude, input.longitude, 16)
 
-  const noTide = new TileRenderer(store, config, () => undefined)
+  const noTide = new TileRenderer(store, config, () => undefined, () => METRIC_DEPTH_UNITS)
   const datum = noTide.render({ z: 16, x, y, layer: 'depth', mode: 'datum', atMs: Date.now() })
   assert.equal(datum.png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
   assert.ok(datum.cellCount >= 1)
@@ -36,17 +37,22 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
     ProjectionUnavailableError
   )
 
-  const withTide = new TileRenderer(store, config, (atMs) => ({
-    heightM: 1.2,
-    sigmaM: 0.2,
-    datum: config.targetDatum,
-    stationId: 'test',
-    stationName: 'Test',
-    source: 'test',
-    method: 'predicted',
-    timestampMs: atMs,
-    stale: false
-  }))
+  const withTide = new TileRenderer(
+    store,
+    config,
+    (atMs) => ({
+      heightM: 1.2,
+      sigmaM: 0.2,
+      datum: config.targetDatum,
+      stationId: 'test',
+      stationName: 'Test',
+      source: 'test',
+      method: 'predicted',
+      timestampMs: atMs,
+      stale: false
+    }),
+    () => METRIC_DEPTH_UNITS
+  )
   const water = withTide.render({ z: 16, x, y, layer: 'depth', mode: 'water', atMs: Date.now() })
   assert.equal(water.projection?.heightM, 1.2)
   assert.notDeepEqual(water.png, datum.png)
@@ -74,6 +80,24 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
   assert.ok(labelledDatum.labelCount >= 1)
   assert.equal(labelledWater.labelCount, labelledDatum.labelCount)
   assert.notDeepEqual(labelledWater.png, labelledDatum.png)
+
+  const feet: DepthDisplayUnits = {
+    ...METRIC_DEPTH_UNITS,
+    targetUnit: 'foot',
+    symbol: 'ft',
+    metersToDisplayFactor: 3.280839895013124
+  }
+  const feetRenderer = new TileRenderer(store, config, () => undefined, () => feet)
+  const labelledFeet = feetRenderer.render({
+    z: 20,
+    x: highZoom.x,
+    y: highZoom.y,
+    layer: 'depth',
+    mode: 'datum',
+    atMs: Date.now()
+  })
+  assert.ok(labelledFeet.labelCount >= 1)
+  assert.notDeepEqual(labelledFeet.png, labelledDatum.png)
 })
 
 function webTile(latitude: number, longitude: number, zoom: number): { x: number; y: number } {

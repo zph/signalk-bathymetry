@@ -32,6 +32,8 @@ The full design and safety model are in
   conservative depth numbers centered in cells at high zoom.
 - Two read-only Signal K chart resources discovered by Freeboard-SK:
   chart-datum depth and tide-adjusted current under-keel safety.
+- Matching Freeboard information-layer resources that forcibly refresh their
+  visible XYZ tiles every 10 minutes, including while the map remains open.
 - HTTP inspection API, administrator backfill/reprocessing endpoints, OpenAPI
   metadata, and a small status/legend web app.
 
@@ -92,6 +94,15 @@ chart. At zoom 19 and above, each sufficiently large hex is labeled with its
 conservative depth: datum depth in the datum layer, or tide-projected water
 depth in the tide-adjusted layer. Gray stippling marks lower confidence and
 magenta cell borders mark a suspected or confirmed change.
+
+The plugin reads Signal K's resolved `depth` unit preference once after startup,
+caches it in plugin data, and converts only the rendered numbers. Storage, QC,
+API fields, and safety settings remain SI meters. For a tide-adjusted overlay
+that must update while Freeboard remains open and stationary, enable **Local
+Bathymetry — Tide-adjusted live** under Freeboard's information/overlay layers.
+Freeboard actively clears and reloads that layer every 10 minutes. The matching
+chart resources remain available, but Freeboard's chart tile cache does not
+periodically evict already-visible tiles.
 
 ## API
 

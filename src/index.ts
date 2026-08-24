@@ -8,6 +8,8 @@ import { normalizeConfig, pluginSchema } from './config'
 import { HistoryBackfill } from './history-backfill'
 import { BathymetryStore } from './store'
 import { TileRenderer } from './tiles'
+import { DepthUnitPreferences } from './depth-units'
+import { createInfoLayerProvider } from './info-layers'
 
 const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
   let runtime: Runtime | undefined
@@ -22,17 +24,27 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
       if (runtime) stopRuntime(runtime)
       try {
         const config = normalizeConfig(rawConfig)
-        const store = new BathymetryStore(join(app.getDataDirPath(), 'bathymetry.sqlite'), config)
+        const dataDirectory = app.getDataDirPath()
+        const store = new BathymetryStore(join(dataDirectory, 'bathymetry.sqlite'), config)
         const capture = new CaptureEngine(app, store, config)
         const history = new HistoryBackfill(app, capture, config)
         const autoBackfill = new AutoBackfill(app, store, history, config)
-        const renderer = new TileRenderer(store, config, (atMs) =>
-          capture.latestTideProjection(atMs)
+        const depthUnits = new DepthUnitPreferences(
+          app,
+          join(dataDirectory, 'depth-display-units.json')
         )
-        runtime = { config, store, capture, history, autoBackfill, renderer }
-        app.registerResourceProvider(createChartProvider(store, config))
+        const renderer = new TileRenderer(
+          store,
+          config,
+          (atMs) => capture.latestTideProjection(atMs),
+          () => depthUnits.current()
+        )
+        runtime = { config, store, capture, history, autoBackfill, depthUnits, renderer }
+        app.registerResourceProvider(createChartProvider(store, config, () => depthUnits.current()))
+        app.registerResourceProvider(createInfoLayerProvider(config, () => depthUnits.current()))
         capture.start()
         autoBackfill.start()
+        depthUnits.start()
         const stats = store.stats()
         app.setPluginStatus(
           `Recording local bathymetry; ${stats.sourceSamples} source samples in ${stats.soundings} records, ${stats.cells} cells, ${config.targetDatum}`
@@ -60,6 +72,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
 }
 
 function stopRuntime(runtime: Runtime): void {
+  runtime.depthUnits.stop()
   runtime.autoBackfill.stop()
   runtime.capture.stop()
   runtime.store.close()

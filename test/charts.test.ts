@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createChartProvider } from '../src/charts'
 import { normalizeConfig } from '../src/config'
 import { BathymetryStore } from '../src/store'
+import { METRIC_DEPTH_UNITS } from '../src/depth-units'
 
 test('chart provider advertises datum and current-water XYZ overlays', async (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-chart-test-'))
@@ -14,7 +15,7 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
     store.close()
     rmSync(directory, { recursive: true, force: true })
   })
-  const provider = createChartProvider(store, config)
+  const provider = createChartProvider(store, config, () => METRIC_DEPTH_UNITS)
   const resources = await provider.methods.listResources({})
   assert.deepEqual(Object.keys(resources).sort(), [
     'signalk-bathymetry-datum',
@@ -32,4 +33,5 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
   const water = resources['signalk-bathymetry-water-now'] as Record<string, unknown>
   assert.match(String(datum.url), /mode=datum/)
   assert.match(String(water.url), /mode=water/)
+  assert.match(String(datum.name), /\(m\)$/)
 })
