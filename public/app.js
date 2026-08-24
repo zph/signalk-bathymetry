@@ -19,6 +19,7 @@ async function refresh() {
     byId('tide').textContent = data.capture.latestTide
       ? `${data.capture.latestTide.heightM.toFixed(2)} m · ${data.capture.latestTide.stationName}${data.capture.latestTide.stale ? ' · stale' : ''}`
       : 'Unavailable'
+    byId('auto-backfill').textContent = `${data.autoBackfill.state} · ${data.autoBackfill.lookbackDays} days${data.autoBackfill.importedRecords !== undefined ? ` · ${data.autoBackfill.importedRecords} records` : ''}`
     byId('error').textContent = data.capture.lastError || 'None'
   } catch (error) {
     byId('capture-state').textContent = `Unavailable: ${error.message}`

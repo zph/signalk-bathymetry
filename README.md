@@ -23,6 +23,8 @@ The full design and safety model are in
   fingerprint deduplication, and versioned QC classifications.
 - Signal K History API backfill in bounded chunks, with provenance downgraded
   when the provider cannot return original `$source` metadata.
+- Automatic 30-day History API backfill after startup when the local evidence
+  store is empty, with delayed provider discovery and bounded retries.
 - Fixed metric surface cells with robust pass estimates, uncertainty,
   confidence, age decay, and asymmetric seabed-change handling.
 - Transparent PNG layers for depth, confidence, age, and change.
@@ -58,6 +60,8 @@ measured vessel offsets and tide datum before recording.
 - `stationaryWindowSeconds` and `stationaryMinimumSamples`: robust aggregation
   at anchor; defaults 60 seconds and 10 samples.
 - `baseCellMeters`, `recencyHalfLifeDays`, and change-confirmation thresholds.
+- `autoBackfillWhenEmpty`, `autoBackfillDays`, and
+  `autoBackfillDelaySeconds`; defaults are enabled, 30 days, and 15 seconds.
 
 The tide-adjusted hazard calculation is:
 

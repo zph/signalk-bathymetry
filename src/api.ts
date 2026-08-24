@@ -10,6 +10,7 @@ import {
 } from './tiles'
 import type { CaptureEngine } from './capture'
 import type { HistoryBackfill } from './history-backfill'
+import type { AutoBackfill } from './auto-backfill'
 import type { BathymetryConfig, QcState } from './types'
 
 const EMPTY_TILE = encodeRgbaPng(256, 256, new Uint8Array(256 * 256 * 4))
@@ -21,6 +22,7 @@ export interface Runtime {
   store: BathymetryStore
   capture: CaptureEngine
   history: HistoryBackfill
+  autoBackfill: AutoBackfill
   renderer: TileRenderer
 }
 
@@ -37,6 +39,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       config: publicConfig(runtime.config),
       capture: runtime.capture.status(),
       history: { running: runtime.history.isRunning() },
+      autoBackfill: runtime.autoBackfill.status(),
       store: runtime.store.stats()
     })
   })
@@ -204,7 +207,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.1.0' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.1.1' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
@@ -242,7 +245,9 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     cellSizeM: config.baseCellMeters,
     dangerUnderKeelM: config.dangerUnderKeelM,
     recencyHalfLifeDays: config.recencyHalfLifeDays,
-    overlayOpacity: config.overlayOpacity
+    overlayOpacity: config.overlayOpacity,
+    autoBackfillWhenEmpty: config.autoBackfillWhenEmpty,
+    autoBackfillDays: config.autoBackfillDays
   }
 }
 

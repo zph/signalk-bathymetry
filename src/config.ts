@@ -33,7 +33,10 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   maxZoom: 20,
   batchSize: 20,
   flushIntervalMs: 1000,
-  historyResolutionSeconds: 1
+  historyResolutionSeconds: 1,
+  autoBackfillWhenEmpty: true,
+  autoBackfillDays: 30,
+  autoBackfillDelaySeconds: 15
 }
 
 type RawConfig = Partial<BathymetryConfig>
@@ -71,6 +74,12 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     DEFAULT_CONFIG.stationaryWindowSeconds
   )
   config.stationaryMinimumSamples = Math.max(3, Math.round(config.stationaryMinimumSamples))
+  config.autoBackfillWhenEmpty =
+    typeof config.autoBackfillWhenEmpty === 'boolean'
+      ? config.autoBackfillWhenEmpty
+      : DEFAULT_CONFIG.autoBackfillWhenEmpty
+  config.autoBackfillDays = clamp(config.autoBackfillDays, 1, 31)
+  config.autoBackfillDelaySeconds = clamp(config.autoBackfillDelaySeconds, 0, 600)
   config.changeMinimumPasses = Math.max(1, Math.round(config.changeMinimumPasses))
   config.changeMinimumDays = Math.max(0, config.changeMinimumDays)
   if (config.instrumentMaxM <= config.instrumentMinM) {
@@ -165,7 +174,26 @@ export function pluginSchema(): object {
       historyProvider: {
         type: 'string',
         title: 'History provider id, blank for server default'
-      }
+      },
+      autoBackfillWhenEmpty: {
+        type: 'boolean',
+        title: 'Automatically backfill when the local store is empty',
+        default: true
+      },
+      autoBackfillDays: numberField(
+        'Automatic empty-store lookback (days)',
+        1,
+        31,
+        1,
+        30
+      ),
+      autoBackfillDelaySeconds: numberField(
+        'Delay before automatic backfill (seconds)',
+        0,
+        600,
+        1,
+        15
+      )
     }
   }
 }

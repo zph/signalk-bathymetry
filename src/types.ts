@@ -54,6 +54,9 @@ export interface BathymetryConfig {
   flushIntervalMs: number
   historyProvider?: string
   historyResolutionSeconds: number
+  autoBackfillWhenEmpty: boolean
+  autoBackfillDays: number
+  autoBackfillDelaySeconds: number
 }
 
 export interface SoundingInput {
@@ -140,4 +143,15 @@ export interface CaptureStatus {
   lastCaptureMs?: number
   lastError?: string
   latestTide?: TideProjection
+}
+
+export interface AutoBackfillStatus {
+  state: 'disabled' | 'not_needed' | 'scheduled' | 'running' | 'complete' | 'failed'
+  attempts: number
+  lookbackDays: number
+  nextAttemptMs?: number
+  completedAtMs?: number
+  importedRows?: number
+  importedRecords?: number
+  lastError?: string
 }

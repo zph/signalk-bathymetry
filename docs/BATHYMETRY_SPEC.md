@@ -745,6 +745,9 @@ history:
   enabled: true
   provider: null                # Signal K default
   maxResolutionSeconds: 1
+  autoBackfillWhenEmpty: true
+  autoBackfillDays: 30
+  autoBackfillDelaySeconds: 15
 surface:
   baseCellMeters: 5
   dangerUnderKeelMeters: 0.75
