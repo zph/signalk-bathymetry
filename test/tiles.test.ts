@@ -7,10 +7,14 @@ import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
 import {
   aggregateOverviewCells,
+  clearanceColor,
   confidenceBadgeColor,
+  confidenceLabelStyle,
+  depthColor,
   formatDepth,
   overviewCellMeters,
   ProjectionUnavailableError,
+  safeBlueWaterDepth,
   TileRenderer
 } from '../src/tiles'
 import { sounding } from './helpers'
@@ -34,6 +38,26 @@ test('confidence badges progress from red through amber to green', () => {
   assert.ok(high[1] > high[0] * 2)
   assert.deepEqual(confidenceBadgeColor(-1), confidenceBadgeColor(0))
   assert.deepEqual(confidenceBadgeColor(2), confidenceBadgeColor(1))
+})
+
+test('safe depth backgrounds use a light-to-cobalt blue scale after three drafts', () => {
+  const draftM = 1.5
+  const dangerM = 0.75
+  const blueStart = safeBlueWaterDepth(draftM, dangerM)
+  assert.equal(blueStart, 4.5)
+  assert.deepEqual(depthColor(blueStart, draftM + dangerM, blueStart), [216, 243, 255])
+  assert.deepEqual(depthColor(blueStart * 8, draftM + dangerM, blueStart), [18, 70, 171])
+  assert.deepEqual(clearanceColor(blueStart - draftM, dangerM, draftM), [216, 243, 255])
+  assert.deepEqual(clearanceColor((blueStart - draftM) * 10, dangerM, draftM), [18, 70, 171])
+})
+
+test('strong confidence slugs fade away on safe blue depth cells', () => {
+  assert.equal(confidenceLabelStyle(0.25, true).alpha, 242)
+  assert.equal(confidenceLabelStyle(0.6, true).alpha, 242)
+  assert.ok(confidenceLabelStyle(0.8, true).alpha > 0)
+  assert.equal(confidenceLabelStyle(1, true).alpha, 0)
+  assert.equal(confidenceLabelStyle(1, false).alpha, 242)
+  assert.ok(confidenceLabelStyle(1, false).background[1] > 0)
 })
 
 test('overview uses larger world-aligned hexes and the shallowest conservative cell', () => {

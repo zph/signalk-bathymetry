@@ -498,7 +498,7 @@ select {
 
 .legend { color: #8ea6a5; font-size: .69rem; }
 .legend > span:last-of-type { float: right; }
-.legend-gradient { height: 27px; margin: .36rem 0; border-radius: 7px; background: linear-gradient(90deg, #d22d23, #f57823, #f5d741, #32cdd7, #2378cd, #192d6e); }
+.legend-gradient { height: 27px; margin: .36rem 0; border-radius: 7px; background: linear-gradient(90deg, #d22d23, #f57823, #f5d741, #d8f3ff, #84cbf4, #3a8fe0, #1246ab); }
 .legend small { display: block; color: #718d8c; line-height: 1.4; }
 .confidence-badge-legend { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: .75rem 0 .45rem; }
 .confidence-badge-legend[hidden] { display: none; }

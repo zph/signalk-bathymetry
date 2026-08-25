@@ -722,7 +722,7 @@ function updateLegend() {
   const legend = {
     depth: {
       low: 'Danger / dry', high: 'Deeper',
-      gradient: 'linear-gradient(90deg,#d22d23,#f57823,#f5d741,#32cdd7,#2378cd,#192d6e)',
+      gradient: 'linear-gradient(90deg,#d22d23,#f57823,#f5d741,#d8f3ff,#84cbf4,#3a8fe0,#1246ab)',
       note: 'Hex fill shows depth; the red–amber–green number badge shows confidence. Review possible seabed change in the Change detection view.'
     },
     confidence: {

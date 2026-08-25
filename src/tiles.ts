@@ -12,7 +12,7 @@ import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
 const TILE_SIZE = 256
 const OVERVIEW_MAX_CELL_METERS = 640
-export const TILE_STYLE_REVISION = 'hex11'
+export const TILE_STYLE_REVISION = 'hex12'
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
 export type DepthMode = 'datum' | 'water'
@@ -200,19 +200,28 @@ export class TileRenderer {
       return false
     }
 
-    const badge = confidenceBadgeColor(cell.confidence)
+    const safeBlueBackground =
+      depthM >= safeBlueWaterDepth(this.config.surfaceToKeelM, this.config.dangerUnderKeelM)
+    const badge = confidenceLabelStyle(cell.confidence, safeBlueBackground)
+    const fill = this.colorForCell(cell, options, projection)
+    const textColor: Rgba =
+      badge.alpha < 128 && perceivedBrightness(fill) > 170
+        ? [18, 55, 105, 255]
+        : [255, 255, 255, 255]
     const labelCenterX = Math.round(centerX)
     const labelCenterY = Math.round(centerY)
-    paintLabelPlate(
-      rgba,
-      labelCenterX,
-      labelCenterY,
-      labelWidth + 2 * padding,
-      labelHeight + 2 * padding,
-      Math.max(2, scale),
-      [badge[0], badge[1], badge[2], 242]
-    )
-    paintBitmapText(rgba, text, labelCenterX, labelCenterY, scale, [255, 255, 255, 255])
+    if (badge.alpha > 0) {
+      paintLabelPlate(
+        rgba,
+        labelCenterX,
+        labelCenterY,
+        labelWidth + 2 * padding,
+        labelHeight + 2 * padding,
+        Math.max(2, scale),
+        [badge.background[0], badge.background[1], badge.background[2], badge.alpha]
+      )
+    }
+    paintBitmapText(rgba, text, labelCenterX, labelCenterY, scale, textColor)
     return true
   }
 
@@ -241,10 +250,24 @@ export class TileRenderer {
         projection.heightM -
         this.config.surfaceToKeelM -
         1.645 * combinedSigma
-      return [...clearanceColor(underKeelM, this.config.dangerUnderKeelM), alpha] as Rgba
+      return [
+        ...clearanceColor(
+          underKeelM,
+          this.config.dangerUnderKeelM,
+          this.config.surfaceToKeelM
+        ),
+        alpha
+      ] as Rgba
     }
     const requiredWaterDepthM = this.config.surfaceToKeelM + this.config.dangerUnderKeelM
-    return [...depthColor(cell.conservativeDepthM, requiredWaterDepthM), alpha] as Rgba
+    return [
+      ...depthColor(
+        cell.conservativeDepthM,
+        requiredWaterDepthM,
+        safeBlueWaterDepth(this.config.surfaceToKeelM, this.config.dangerUnderKeelM)
+      ),
+      alpha
+    ] as Rgba
   }
 }
 
@@ -340,35 +363,68 @@ export function confidenceBadgeColor(confidence: number): Rgb {
   return interpolateStops(Math.max(0, Math.min(1, confidence)), CONFIDENCE_STOPS)
 }
 
+export function confidenceLabelStyle(
+  confidence: number,
+  safeBlueBackground: boolean
+): { background: Rgb; alpha: number } {
+  const normalized = Math.max(0, Math.min(1, confidence))
+  if (!safeBlueBackground || normalized <= 0.6) {
+    return { background: confidenceBadgeColor(normalized), alpha: 242 }
+  }
+  // On safe blue cells, retain red/amber warnings but fade strong confidence to
+  // transparent instead of introducing a competing green surface color.
+  const fade = (normalized - 0.6) / 0.4
+  return {
+    background: confidenceBadgeColor(0.6),
+    alpha: Math.round(242 * (1 - fade))
+  }
+}
+
 const AGE_STOPS: ColorStop[] = [
   [0, [95, 95, 100]],
   [0.5, [190, 135, 65]],
   [1, [45, 175, 120]]
 ]
 
-function depthColor(depthM: number, requiredWaterDepthM: number): Rgb {
+export function safeBlueWaterDepth(draftM: number, dangerUnderKeelM: number): number {
+  // Three drafts gives the navigator a useful shallow-but-safe boundary without
+  // another vessel setting. Never enter the blue band before the entire danger
+  // transition has cleared.
+  return Math.max(0.1, draftM * 3, draftM + dangerUnderKeelM * 2)
+}
+
+export function depthColor(
+  depthM: number,
+  requiredWaterDepthM: number,
+  blueStartDepthM: number
+): Rgb {
   const safe = Math.max(0.1, requiredWaterDepthM)
+  const blueStart = Math.max(safe, blueStartDepthM)
   const stops: ColorStop[] = [
     [-1, [135, 45, 35]],
     [0, [210, 45, 35]],
     [safe * 0.5, [245, 120, 35]],
     [safe, [245, 215, 65]],
-    [safe * 2, [50, 205, 215]],
-    [safe * 4, [35, 120, 205]],
-    [Math.max(30, safe * 10), [25, 45, 110]]
+    [blueStart, [216, 243, 255]],
+    [blueStart * 2, [132, 203, 244]],
+    [blueStart * 4, [58, 143, 224]],
+    [Math.max(30, blueStart * 8), [18, 70, 171]]
   ]
   return interpolateStops(depthM, stops)
 }
 
-function clearanceColor(clearanceM: number, dangerM: number): Rgb {
+export function clearanceColor(clearanceM: number, dangerM: number, draftM: number): Rgb {
   const threshold = Math.max(0.1, dangerM)
+  const blueStart = Math.max(threshold * 2, safeBlueWaterDepth(draftM, dangerM) - draftM)
   return interpolateStops(clearanceM, [
     [-threshold, [125, 20, 25]],
     [0, [220, 35, 30]],
     [threshold, [245, 105, 25]],
     [threshold * 2, [245, 215, 65]],
-    [Math.max(3, threshold * 4), [45, 195, 205]],
-    [Math.max(10, threshold * 10), [30, 85, 175]]
+    [blueStart, [216, 243, 255]],
+    [blueStart * 2, [132, 203, 244]],
+    [blueStart * 4, [58, 143, 224]],
+    [Math.max(30, blueStart * 8), [18, 70, 171]]
   ])
 }
 
@@ -388,6 +444,10 @@ function interpolateStops(value: number, stops: readonly ColorStop[]): Rgb {
     ) as Rgb
   }
   return last[1]
+}
+
+function perceivedBrightness(color: readonly number[]): number {
+  return color[0]! * 0.299 + color[1]! * 0.587 + color[2]! * 0.114
 }
 
 interface PixelPoint {
