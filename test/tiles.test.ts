@@ -38,14 +38,16 @@ test('confidence badges progress from red through amber to green', () => {
 
 test('overview uses larger world-aligned hexes and the shallowest conservative cell', () => {
   assert.equal(overviewCellMeters(5, 22), 5)
+  assert.equal(overviewCellMeters(5, 24), 5)
   assert.equal(overviewCellMeters(5, 21), 5)
   assert.equal(overviewCellMeters(5, 20), 5)
   assert.equal(overviewCellMeters(5, 19), 10)
-  assert.equal(overviewCellMeters(5, 18), 40)
-  assert.equal(overviewCellMeters(5, 17), 80)
-  assert.equal(overviewCellMeters(5, 16), 160)
-  assert.equal(overviewCellMeters(5, 15), 320)
-  assert.equal(overviewCellMeters(5, 14), 640)
+  assert.equal(overviewCellMeters(5, 18), 20)
+  assert.equal(overviewCellMeters(5, 17), 40)
+  assert.equal(overviewCellMeters(5, 16), 80)
+  assert.equal(overviewCellMeters(5, 15), 160)
+  assert.equal(overviewCellMeters(5, 14), 320)
+  assert.equal(overviewCellMeters(5, 13), 640)
   assert.equal(overviewCellMeters(5, 8), 640)
 
   const common: SurfaceCell = {

@@ -2,6 +2,7 @@ import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
 import { revisionFor, type DepthDisplayUnits } from './depth-units'
+import { TILE_STYLE_REVISION } from './tiles'
 
 const DATUM_ID = 'signalk-bathymetry-datum'
 const WATER_ID = 'signalk-bathymetry-water-now'
@@ -63,7 +64,7 @@ function chartResource(
   units: DepthDisplayUnits
 ): Record<string, unknown> {
   const bounds = expandedBounds(store.stats().bounds)
-  const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}`
+  const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}&style=${TILE_STYLE_REVISION}`
   return {
     identifier,
     name,

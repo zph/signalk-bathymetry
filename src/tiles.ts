@@ -3,8 +3,7 @@ import {
   hexCellCenter,
   hexCellForMercator,
   hexCellVertices,
-  tileMercatorBounds,
-  WEB_MERCATOR_LIMIT
+  tileMercatorBounds
 } from './geo'
 import { encodeRgbaPng } from './png'
 import type { DepthDisplayUnits } from './depth-units'
@@ -12,8 +11,8 @@ import type { BathymetryStore } from './store'
 import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
 const TILE_SIZE = 256
-const OVERVIEW_TARGET_PIXELS = 64
 const OVERVIEW_MAX_CELL_METERS = 640
+export const TILE_STYLE_REVISION = 'hex10'
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
 export type DepthMode = 'datum' | 'water'
@@ -93,17 +92,12 @@ export class TileRenderer {
       options.mode,
       projection
     )
-    const changedPolygons: PixelPoint[][] = []
     for (const cell of cells) {
-      const polygon = this.paintCell(rgba, cell, bounds, cellMeters, options, projection)
-      if (polygon && options.layer === 'depth' && cell.changeState !== 'stable') {
-        changedPolygons.push(polygon)
-      }
+      this.paintCell(rgba, cell, bounds, cellMeters, options, projection)
     }
     // All fills are painted before the perimeter. Stroke only exposed geometric
     // edges so adjacent hexes remain one swath and diagonals are anti-aliased.
     paintOuterHexBoundary(rgba, cells, bounds, cellMeters, [25, 35, 45, 190])
-    for (const polygon of changedPolygons) paintPolygonBorder(rgba, polygon, [220, 0, 170, 225])
 
     let labelCount = 0
     if (
@@ -260,13 +254,10 @@ export class TileRenderer {
 
 export function overviewCellMeters(baseCellMeters: number, zoom: number): number {
   if (zoom >= 20) return baseCellMeters
-  // At z19, double the native cell without jumping all the way to the far-view
-  // target. This makes the 0.01 NM view legible while preserving local detail.
-  if (zoom === 19) return Math.min(OVERVIEW_MAX_CELL_METERS, baseCellMeters * 2)
-  const metersPerPixel = (2 * WEB_MERCATOR_LIMIT) / (2 ** zoom * TILE_SIZE)
-  const requiredMeters = metersPerPixel * OVERVIEW_TARGET_PIXELS
-  if (requiredMeters <= baseCellMeters) return baseCellMeters
-  const scale = 2 ** Math.ceil(Math.log2(requiredMeters / baseCellMeters))
+  // Double the world-space cell once per integer zoom below z20. Its screen-space
+  // footprint therefore stays nearly constant when clients cross a fractional
+  // zoom boundary instead of jumping fourfold between z19 and z18.
+  const scale = 2 ** (20 - Math.floor(zoom))
   return Math.min(OVERVIEW_MAX_CELL_METERS, baseCellMeters * scale)
 }
 
@@ -449,14 +440,6 @@ function paintOuterHexBoundary(
       if (occupied.has(`${cell.cellX + neighbor[0]}:${cell.cellY + neighbor[1]}`)) continue
       paintAntialiasedLine(rgba, polygon[edge]!, polygon[(edge + 1) % polygon.length]!, color)
     }
-  }
-}
-
-function paintPolygonBorder(rgba: Uint8Array, polygon: readonly PixelPoint[], color: Rgba): void {
-  for (let index = 0; index < polygon.length; index += 1) {
-    const start = polygon[index]!
-    const end = polygon[(index + 1) % polygon.length]!
-    paintAntialiasedLine(rgba, start, end, color)
   }
 }
 

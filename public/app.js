@@ -723,7 +723,7 @@ function updateLegend() {
     depth: {
       low: 'Danger / dry', high: 'Deeper',
       gradient: 'linear-gradient(90deg,#d22d23,#f57823,#f5d741,#32cdd7,#2378cd,#192d6e)',
-      note: 'Hex fill shows depth; the red–amber–green number badge shows confidence. Magenta outlines mark possible seabed change.'
+      note: 'Hex fill shows depth; the red–amber–green number badge shows confidence. Review possible seabed change in the Change detection view.'
     },
     confidence: {
       low: 'Low confidence', high: 'High confidence',

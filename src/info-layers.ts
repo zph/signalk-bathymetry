@@ -1,6 +1,7 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import type { ResourceProvider } from '@signalk/server-api'
 import { revisionFor, type DepthDisplayUnits } from './depth-units'
+import { TILE_STYLE_REVISION } from './tiles'
 import type { BathymetryConfig } from './types'
 
 const DATUM_INFO_ID = 'signalk-bathymetry-datum-live'
@@ -78,7 +79,7 @@ function infoLayer(
         : `Conservative local depth below ${config.targetDatum} in ${units.symbol}; enable this or the tide-adjusted layer, not both; refreshes every 10 minutes; not for primary navigation`,
     values: {
       sourceType: 'xyz',
-      url: `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}`,
+      url: `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}&style=${TILE_STYLE_REVISION}`,
       layers: [],
       opacity,
       minZoom: config.minZoom,
