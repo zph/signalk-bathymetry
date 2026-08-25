@@ -22,7 +22,7 @@ test('advertises Freeboard XYZ information layers with a real ten-minute refresh
     assert.equal(values.opacity, 1)
     assert.equal(values.maxZoom, 24)
     assert.match(String(values.url), /\{z\}\/\{x\}\/\{y\}\.png/)
-    assert.match(String(values.url), /[?&]style=hex10(?:&|$)/)
+    assert.match(String(values.url), /[?&]style=hex11(?:&|$)/)
   }
 })
 

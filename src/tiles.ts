@@ -12,7 +12,7 @@ import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 
 const TILE_SIZE = 256
 const OVERVIEW_MAX_CELL_METERS = 640
-export const TILE_STYLE_REVISION = 'hex10'
+export const TILE_STYLE_REVISION = 'hex11'
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
 export type DepthMode = 'datum' | 'water'
@@ -100,11 +100,7 @@ export class TileRenderer {
     paintOuterHexBoundary(rgba, cells, bounds, cellMeters, [25, 35, 45, 190])
 
     let labelCount = 0
-    if (
-      options.layer === 'depth' &&
-      this.config.showDepthLabels &&
-      options.z >= this.config.depthLabelMinZoom
-    ) {
+    if (options.layer === 'depth' && this.config.showDepthLabels) {
       for (const cell of cells) {
         if (this.paintDepthLabel(rgba, cell, bounds, cellMeters, options, projection)) {
           labelCount += 1
@@ -178,7 +174,7 @@ export class TileRenderer {
     const units = this.getDepthUnits()
     const text = formatDepth(depthM * units.metersToDisplayFactor, units.decimals)
     const availableWidth = (cellMeters / span) * TILE_SIZE
-    const zoomSteps = Math.max(0, options.z - this.config.depthLabelMinZoom)
+    const zoomSteps = Math.max(0, options.z - 19)
     const overviewScale = Math.max(1, Math.round(cellMeters / this.config.baseCellMeters))
     let scale = Math.min(4, 2 ** zoomSteps * overviewScale)
     let padding = scale + 1

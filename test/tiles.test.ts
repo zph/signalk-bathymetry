@@ -89,8 +89,7 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
     baseCellMeters: 10,
     minZoom: 0,
     dangerUnderKeelM: 0.8,
-    showDepthLabels: true,
-    depthLabelMinZoom: 19
+    showDepthLabels: true
   })
   const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
   t.after(() => {
@@ -106,7 +105,7 @@ test('renderer emits joined hex PNG tiles, labels depth, and requires fresh proj
   assert.equal(datum.png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
   assert.ok(datum.cellCount >= 1)
   assert.equal(datum.cellMeters, 160)
-  assert.equal(datum.labelCount, 0)
+  assert.ok(datum.labelCount >= 1)
   assert.throws(
     () => noTide.render({ z: 16, x, y, layer: 'depth', mode: 'water', atMs: Date.now() }),
     ProjectionUnavailableError

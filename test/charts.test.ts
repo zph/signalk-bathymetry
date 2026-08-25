@@ -28,7 +28,7 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
     assert.equal(resource.chartFormat, 'png')
     assert.equal(resource.maxzoom, 24)
     assert.match(String(resource.url), /\{z\}\/\{x\}\/\{y\}\.png/)
-    assert.match(String(resource.url), /[?&]style=hex10(?:&|$)/)
+    assert.match(String(resource.url), /[?&]style=hex11(?:&|$)/)
     assert.equal(resource.url, resource.tilemapUrl)
   }
   const datum = resources['signalk-bathymetry-datum'] as Record<string, unknown>

@@ -32,7 +32,6 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   overlayOpacity: 0.55,
   qcBaseChart: 'noaa-enc',
   showDepthLabels: true,
-  depthLabelMinZoom: 19,
   minZoom: 8,
   maxZoom: 24,
   batchSize: 20,
@@ -72,7 +71,6 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     typeof config.showDepthLabels === 'boolean'
       ? config.showDepthLabels
       : DEFAULT_CONFIG.showDepthLabels
-  config.depthLabelMinZoom = Math.round(clamp(config.depthLabelMinZoom, 0, 24))
   config.minZoom = Math.round(clamp(config.minZoom, 0, 22))
   config.maxZoom = Math.round(clamp(config.maxZoom, config.minZoom, 24))
   config.baseCellMeters = positive(config.baseCellMeters, DEFAULT_CONFIG.baseCellMeters)
@@ -195,10 +193,9 @@ export function pluginSchema(): object {
       },
       showDepthLabels: {
         type: 'boolean',
-        title: 'Show depth numbers inside hex cells at high zoom',
+        title: 'Show depth numbers inside every displayed hex cell',
         default: true
       },
-      depthLabelMinZoom: numberField('Minimum zoom for depth numbers', 0, 24, 1, 19),
       instrumentMinM: numberField('Sounder minimum valid depth (m)', 0, 100, 0.1, 0.4),
       instrumentMaxM: numberField('Sounder maximum valid depth (m)', 1, 12000, 1, 120),
       historyProvider: {

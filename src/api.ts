@@ -160,7 +160,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
       const unitStatus = runtime.depthUnits.status()
-      const etag = `W/\"${TILE_STYLE_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelMinZoom}-${unitStatus.revision}\"`
+      const etag = `W/\"${TILE_STYLE_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${unitStatus.revision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
@@ -224,7 +224,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.3.8' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.3.9' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
@@ -266,7 +266,6 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     overlayOpacity: config.overlayOpacity,
     qcBaseChart: config.qcBaseChart,
     showDepthLabels: config.showDepthLabels,
-    depthLabelMinZoom: config.depthLabelMinZoom,
     minZoom: config.minZoom,
     maxZoom: config.maxZoom,
     autoBackfillWhenEmpty: config.autoBackfillWhenEmpty,
