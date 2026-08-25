@@ -1,6 +1,7 @@
 import type { BathymetryConfig, DepthReference } from './types'
 
 export const DEFAULT_CONFIG: BathymetryConfig = {
+  positionPath: 'navigation.position',
   depthPath: 'environment.depth.belowKeel',
   surfaceToKeelM: 1.5,
   surfaceToTransducerM: 0.5,
@@ -49,6 +50,7 @@ export function normalizeConfig(raw: object): BathymetryConfig {
   const config: BathymetryConfig = { ...DEFAULT_CONFIG, ...input }
 
   config.targetDatum = nonEmpty(config.targetDatum, DEFAULT_CONFIG.targetDatum).toUpperCase()
+  config.positionPath = nonEmpty(config.positionPath, DEFAULT_CONFIG.positionPath)
   config.depthPath = nonEmpty(config.depthPath, DEFAULT_CONFIG.depthPath)
   config.tideStationId = nonEmpty(config.tideStationId, DEFAULT_CONFIG.tideStationId)
   config.tideStationName = nonEmpty(config.tideStationName, DEFAULT_CONFIG.tideStationName)
@@ -112,6 +114,11 @@ export function pluginSchema(): object {
     type: 'object',
     title: 'Local Bathymetry',
     properties: {
+      positionPath: {
+        type: 'string',
+        title: 'Vessel position path (relative to vessels.self)',
+        default: DEFAULT_CONFIG.positionPath
+      },
       depthPath: {
         type: 'string',
         title: 'Depth path',

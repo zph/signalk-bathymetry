@@ -103,7 +103,7 @@ they are alternatives, not independent votes.
 
 | Input | Signal K source | Rule |
 | --- | --- | --- |
-| Position | `navigation.position` | WGS84 latitude/longitude and observation timestamp |
+| Position | Configurable; defaults to `navigation.position` | WGS84 latitude/longitude and observation timestamp |
 | Depth | `environment.depth.belowKeel`, `.belowSurface`, or `.belowTransducer` | SI meters; one configured source/reference wins |
 | Vertical offset | Calibration profile and/or Signal K depth offsets | Must state which reference points it connects |
 | Water level | Historical tide value or tide model evaluated at sounding time | Datum, station/model, timestamp, and method are mandatory |

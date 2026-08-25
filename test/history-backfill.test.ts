@@ -38,6 +38,21 @@ test('does not attach a stale position to a measurement', () => {
   assert.deepEqual(alignHistoryRows(positions, measurements, 5_000, DEPTH_PATH), [])
 })
 
+test('aligns history using a configured position path', () => {
+  const positionPath = 'navigation.gnss.position'
+  const positions = response(positionPath, [
+    ['2026-08-01T00:00:00.000Z', { latitude: 37.8, longitude: -122.4 }]
+  ])
+  const measurements = response([DEPTH_PATH, 'environment.tide.heightNow'], [
+    ['2026-08-01T00:00:00.000Z', 4.5, 0.8]
+  ])
+
+  assert.deepEqual(
+    alignHistoryRows(positions, measurements, 2_000, DEPTH_PATH, positionPath),
+    [['2026-08-01T00:00:00.000Z', { latitude: 37.8, longitude: -122.4 }, 4.5, 0.8, undefined]]
+  )
+})
+
 function response(
   paths: string | string[],
   data: Array<[string, ...unknown[]]>

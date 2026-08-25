@@ -19,6 +19,7 @@ export interface TimestampedValue<T> {
 }
 
 export interface BathymetryConfig {
+  positionPath: string
   depthPath: string
   depthSource?: string
   surfaceToKeelM: number

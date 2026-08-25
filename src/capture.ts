@@ -12,7 +12,6 @@ import type {
   TimestampedValue
 } from './types'
 
-const POSITION_PATH = 'navigation.position'
 const SOG_PATH = 'navigation.speedOverGround'
 const COG_PATH = 'navigation.courseOverGroundTrue'
 const HEAVE_PATH = 'environment.heave'
@@ -48,7 +47,7 @@ export class CaptureEngine {
     if (this.running) return
     this.running = true
     const auxiliaryPaths = [
-      POSITION_PATH,
+      this.config.positionPath,
       SOG_PATH,
       COG_PATH,
       HEAVE_PATH,
@@ -170,7 +169,7 @@ export class CaptureEngine {
   }
 
   private updateAuxiliary(path: string, value: unknown, timestampMs: number, source: string): void {
-    if (path === POSITION_PATH) {
+    if (path === this.config.positionPath) {
       const position = parsePosition(value)
       if (position) {
         this.position = { value: position, timestampMs, source }

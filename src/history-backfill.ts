@@ -50,14 +50,15 @@ export class HistoryBackfill {
         // internal pipelines, then incorrectly require equal row counts. Query
         // them independently and join their sparse buckets by timestamp.
         const [positions, measurements] = await Promise.all([
-          history.getValues({ ...request, pathSpecs: [spec('navigation.position', 'first')] }),
+          history.getValues({ ...request, pathSpecs: [spec(this.config.positionPath, 'first')] }),
           history.getValues({ ...request, pathSpecs: this.measurementPathSpecs() })
         ])
         const alignedRows = alignHistoryRows(
           positions,
           measurements,
           Math.max(5_000, this.config.historyResolutionSeconds * 2_000),
-          this.config.depthPath
+          this.config.depthPath,
+          this.config.positionPath
         )
         for (const row of alignedRows) {
           const sounding = this.rowToSounding(row)
@@ -188,9 +189,10 @@ export function alignHistoryRows(
   positions: history.ValuesResponse,
   measurements: history.ValuesResponse,
   toleranceMs: number,
-  depthPath: string
+  depthPath: string,
+  positionPath = 'navigation.position'
 ): unknown[][] {
-  const positionColumn = responseColumn(positions, 'navigation.position')
+  const positionColumn = responseColumn(positions, positionPath)
   const depthColumn = responseColumn(measurements, depthPath)
   const tideColumn = responseColumn(measurements, 'environment.tide.heightNow')
   const sogColumn = responseColumn(measurements, 'navigation.speedOverGround')
