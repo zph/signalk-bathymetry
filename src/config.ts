@@ -33,7 +33,7 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   showDepthLabels: true,
   depthLabelMinZoom: 19,
   minZoom: 8,
-  maxZoom: 20,
+  maxZoom: 22,
   batchSize: 20,
   flushIntervalMs: 1000,
   historyResolutionSeconds: 1,

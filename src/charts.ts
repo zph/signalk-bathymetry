@@ -69,8 +69,8 @@ function chartResource(
     name,
     description:
       mode === 'datum'
-        ? `Crowdsourced conservative depth below ${config.targetDatum}, labeled in ${units.symbol}; not for primary navigation`
-        : `Estimated conservative water depth using the current ${config.targetDatum} tide, labeled in ${units.symbol}; not for primary navigation`,
+        ? `Crowdsourced conservative depth below ${config.targetDatum}, labeled in ${units.symbol}; enable this or the tide-adjusted chart, not both; not for primary navigation`
+        : `Estimated conservative water depth using the current ${config.targetDatum} tide, labeled in ${units.symbol}; enable this or the datum chart, not both; not for primary navigation`,
     type: 'tilelayer',
     format: 'png',
     chartFormat: 'png',

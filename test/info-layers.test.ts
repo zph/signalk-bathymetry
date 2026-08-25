@@ -20,6 +20,7 @@ test('advertises Freeboard XYZ information layers with a real ten-minute refresh
     assert.equal(values.sourceType, 'xyz')
     assert.equal(values.refreshInterval, INFO_LAYER_REFRESH_MS)
     assert.equal(values.opacity, 1)
+    assert.equal(values.maxZoom, 22)
     assert.match(String(values.url), /\{z\}\/\{x\}\/\{y\}\.png/)
   }
 })

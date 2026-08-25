@@ -74,8 +74,8 @@ function infoLayer(
     name,
     description:
       mode === 'water'
-        ? `Conservative tide-adjusted local depth in ${units.symbol}; refreshes every 10 minutes; not for primary navigation`
-        : `Conservative local depth below ${config.targetDatum} in ${units.symbol}; refreshes every 10 minutes; not for primary navigation`,
+        ? `Conservative tide-adjusted local depth in ${units.symbol}; enable this or the datum layer, not both; refreshes every 10 minutes; not for primary navigation`
+        : `Conservative local depth below ${config.targetDatum} in ${units.symbol}; enable this or the tide-adjusted layer, not both; refreshes every 10 minutes; not for primary navigation`,
     values: {
       sourceType: 'xyz',
       url: `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}`,

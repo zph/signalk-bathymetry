@@ -37,6 +37,8 @@ test('confidence badges progress from red through amber to green', () => {
 })
 
 test('overview uses larger world-aligned hexes and the shallowest conservative cell', () => {
+  assert.equal(overviewCellMeters(5, 22), 5)
+  assert.equal(overviewCellMeters(5, 21), 5)
   assert.equal(overviewCellMeters(5, 20), 5)
   assert.equal(overviewCellMeters(5, 19), 10)
   assert.equal(overviewCellMeters(5, 18), 40)
