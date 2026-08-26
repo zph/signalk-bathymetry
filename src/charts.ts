@@ -96,6 +96,7 @@ function vectorChartResource(
     tilemapUrl: tileUrl,
     layers: ['DEPARE', 'SOUNDG'],
     chartLayers: ['DEPARE', 'SOUNDG'],
+    featureInfo: 'bathymetry-cell',
     defaultVisible: false
   }
 }

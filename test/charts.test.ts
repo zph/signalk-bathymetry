@@ -51,6 +51,7 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
     assert.equal(resource.chartFormat, 'pbf')
     assert.deepEqual(resource.layers, ['DEPARE', 'SOUNDG'])
     assert.deepEqual(resource.chartLayers, ['DEPARE', 'SOUNDG'])
+    assert.equal(resource.featureInfo, 'bathymetry-cell')
     assert.match(String(resource.url), /\{z\}\/\{x\}\/\{y\}\.pbf/)
     assert.equal(resource.url, resource.tilemapUrl)
   }
