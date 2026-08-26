@@ -35,6 +35,7 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
     assert.match(String(resource.url), /\{z\}\/\{x\}\/\{y\}\.png/)
     assert.match(String(resource.url), /[?&]style=hex12(?:&|$)/)
     assert.equal(resource.url, resource.tilemapUrl)
+    assert.equal(resource.defaultVisible, false)
   }
   const datum = resources['signalk-bathymetry-datum'] as Record<string, unknown>
   const water = resources['signalk-bathymetry-water-now'] as Record<string, unknown>
@@ -55,4 +56,12 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
     assert.match(String(resource.url), /\{z\}\/\{x\}\/\{y\}\.pbf/)
     assert.equal(resource.url, resource.tilemapUrl)
   }
+  assert.equal(
+    (resources['signalk-bathymetry-datum-vector'] as Record<string, unknown>).defaultVisible,
+    true
+  )
+  assert.equal(
+    (resources['signalk-bathymetry-water-now-vector'] as Record<string, unknown>).defaultVisible,
+    false
+  )
 })

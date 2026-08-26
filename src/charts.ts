@@ -23,7 +23,8 @@ export function createChartProvider(
         'datum',
         store,
         config,
-        units
+        units,
+        false
       ),
       [WATER_ID]: chartResource(
         WATER_ID,
@@ -31,21 +32,24 @@ export function createChartProvider(
         'water',
         store,
         config,
-        units
+        units,
+        false
       ),
       [DATUM_VECTOR_ID]: vectorChartResource(
         DATUM_VECTOR_ID,
         `Local Bathymetry Cells — ${config.targetDatum}`,
         'datum',
         store,
-        config
+        config,
+        true
       ),
       [WATER_VECTOR_ID]: vectorChartResource(
         WATER_VECTOR_ID,
         'Local Bathymetry Cells — Tide-adjusted now',
         'water',
         store,
-        config
+        config,
+        false
       )
     }
   }
@@ -76,7 +80,8 @@ function vectorChartResource(
   name: string,
   mode: 'datum' | 'water',
   store: BathymetryStore,
-  config: BathymetryConfig
+  config: BathymetryConfig,
+  defaultVisible: boolean
 ): Record<string, unknown> {
   const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.pbf?mode=${mode}`
   return {
@@ -97,7 +102,7 @@ function vectorChartResource(
     layers: ['DEPARE', 'SOUNDG'],
     chartLayers: ['DEPARE', 'SOUNDG'],
     featureInfo: 'bathymetry-cell',
-    defaultVisible: false
+    defaultVisible
   }
 }
 
@@ -107,7 +112,8 @@ function chartResource(
   mode: 'datum' | 'water',
   store: BathymetryStore,
   config: BathymetryConfig,
-  units: DepthDisplayUnits
+  units: DepthDisplayUnits,
+  defaultVisible: boolean
 ): Record<string, unknown> {
   const bounds = expandedBounds(store.stats().bounds)
   const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.png?layer=depth&mode=${mode}&units=${revisionFor(units)}&style=${TILE_STYLE_REVISION}`
@@ -127,7 +133,8 @@ function chartResource(
     url: tileUrl,
     tilemapUrl: tileUrl,
     layers: [],
-    chartLayers: []
+    chartLayers: [],
+    defaultVisible
   }
 }
 
