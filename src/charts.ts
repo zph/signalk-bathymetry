@@ -6,6 +6,8 @@ import { TILE_STYLE_REVISION } from './tiles'
 
 const DATUM_ID = 'signalk-bathymetry-datum'
 const WATER_ID = 'signalk-bathymetry-water-now'
+const DATUM_VECTOR_ID = 'signalk-bathymetry-datum-vector'
+const WATER_VECTOR_ID = 'signalk-bathymetry-water-now-vector'
 
 export function createChartProvider(
   store: BathymetryStore,
@@ -30,6 +32,20 @@ export function createChartProvider(
         store,
         config,
         units
+      ),
+      [DATUM_VECTOR_ID]: vectorChartResource(
+        DATUM_VECTOR_ID,
+        `Local Bathymetry Cells — ${config.targetDatum}`,
+        'datum',
+        store,
+        config
+      ),
+      [WATER_VECTOR_ID]: vectorChartResource(
+        WATER_VECTOR_ID,
+        'Local Bathymetry Cells — Tide-adjusted now',
+        'water',
+        store,
+        config
       )
     }
   }
@@ -52,6 +68,35 @@ export function createChartProvider(
         throw new Error('Bathymetry chart resources are read-only')
       }
     }
+  }
+}
+
+function vectorChartResource(
+  identifier: string,
+  name: string,
+  mode: 'datum' | 'water',
+  store: BathymetryStore,
+  config: BathymetryConfig
+): Record<string, unknown> {
+  const tileUrl = `/plugins/signalk-bathymetry/tiles/{z}/{x}/{y}.pbf?mode=${mode}`
+  return {
+    identifier,
+    name,
+    description:
+      mode === 'datum'
+        ? `Interactive local depth cells below ${config.targetDatum}, including quality and evidence details; not for primary navigation`
+        : `Interactive tide-adjusted local depth cells with quality and evidence details; not for primary navigation`,
+    type: 'S-57',
+    format: 'pbf',
+    chartFormat: 'pbf',
+    minzoom: config.minZoom,
+    maxzoom: config.maxZoom,
+    bounds: expandedBounds(store.stats().bounds),
+    url: tileUrl,
+    tilemapUrl: tileUrl,
+    layers: ['DEPARE', 'SOUNDG'],
+    chartLayers: ['DEPARE', 'SOUNDG'],
+    defaultVisible: false
   }
 }
 

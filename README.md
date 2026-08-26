@@ -30,6 +30,8 @@ The full design and safety model are in
   render as one continuous measured swath without internal grid borders.
 - Transparent PNG layers for depth, confidence, age, and change, with optional
   conservative depth numbers centered in cells at high zoom.
+- Interactive S-57-style MVT depth cells with meter-native depths, confidence,
+  uncertainty, evidence counts, recency, and change metadata.
 - Two read-only Signal K chart resources discovered by Freeboard-SK:
   chart-datum depth and tide-adjusted current under-keel safety.
 - Matching Freeboard information-layer resources that forcibly refresh their
@@ -119,6 +121,14 @@ Freeboard actively clears and reloads that layer every 10 minutes. The matching
 chart resources remain available, but Freeboard's chart tile cache does not
 periodically evict already-visible tiles.
 
+Binnacle also discovers two **Local Bathymetry Cells** chart resources. These
+use live MVT tiles with S-57 `DEPARE` and `SOUNDG` source layers, so Binnacle
+renders the cell fills and depth labels with its ENC portrayal and can inspect a
+cell on click. Depth attributes remain in meters inside the tile. Binnacle
+converts them to the active Signal K depth unit only when displaying labels and
+cell details. The existing PNG resources remain available for Freeboard
+compatibility and for the confidence, age, and change raster views.
+
 ## API
 
 Read-only routes are mounted below `/plugins/signalk-bathymetry`:
@@ -131,6 +141,7 @@ GET /cells/lookup?latitude=&longitude=
 GET /changes?since=
 GET /projection?at=now
 GET /tiles/{z}/{x}/{y}.png?layer=depth|confidence|age|change&mode=datum|water
+GET /tiles/{z}/{x}/{y}.pbf?mode=datum|water
 ```
 
 Administrator-only operations:

@@ -10,6 +10,7 @@ import { BathymetryStore } from './store'
 import { TileRenderer } from './tiles'
 import { DepthUnitPreferences } from './depth-units'
 import { createInfoLayerProvider } from './info-layers'
+import { VectorTileRenderer } from './vector-tiles'
 
 const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
   let runtime: Runtime | undefined
@@ -39,7 +40,21 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           (atMs) => capture.latestTideProjection(atMs),
           () => depthUnits.current()
         )
-        runtime = { config, store, capture, history, autoBackfill, depthUnits, renderer }
+        const vectorRenderer = new VectorTileRenderer(
+          store,
+          config,
+          (atMs) => capture.latestTideProjection(atMs)
+        )
+        runtime = {
+          config,
+          store,
+          capture,
+          history,
+          autoBackfill,
+          depthUnits,
+          renderer,
+          vectorRenderer
+        }
         app.registerResourceProvider(createChartProvider(store, config, () => depthUnits.current()))
         app.registerResourceProvider(
           createInfoLayerProvider(

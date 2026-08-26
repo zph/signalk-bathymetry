@@ -19,9 +19,14 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
   const resources = await provider.methods.listResources({})
   assert.deepEqual(Object.keys(resources).sort(), [
     'signalk-bathymetry-datum',
-    'signalk-bathymetry-water-now'
+    'signalk-bathymetry-datum-vector',
+    'signalk-bathymetry-water-now',
+    'signalk-bathymetry-water-now-vector'
   ])
-  for (const value of Object.values(resources)) {
+  for (const value of [
+    resources['signalk-bathymetry-datum'],
+    resources['signalk-bathymetry-water-now']
+  ]) {
     const resource = value as Record<string, unknown>
     assert.equal(resource.type, 'tilelayer')
     assert.equal(resource.format, 'png')
@@ -38,4 +43,15 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
   assert.match(String(datum.name), /\(m\)$/)
   assert.match(String(datum.description), /enable this or the tide-adjusted chart, not both/)
   assert.match(String(water.description), /enable this or the datum chart, not both/)
+
+  for (const id of ['signalk-bathymetry-datum-vector', 'signalk-bathymetry-water-now-vector']) {
+    const resource = resources[id] as Record<string, unknown>
+    assert.equal(resource.type, 'S-57')
+    assert.equal(resource.format, 'pbf')
+    assert.equal(resource.chartFormat, 'pbf')
+    assert.deepEqual(resource.layers, ['DEPARE', 'SOUNDG'])
+    assert.deepEqual(resource.chartLayers, ['DEPARE', 'SOUNDG'])
+    assert.match(String(resource.url), /\{z\}\/\{x\}\/\{y\}\.pbf/)
+    assert.equal(resource.url, resource.tilemapUrl)
+  }
 })

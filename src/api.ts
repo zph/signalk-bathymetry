@@ -15,6 +15,11 @@ import type { AutoBackfill } from './auto-backfill'
 import type { BathymetryConfig, QcState, SurfaceCell } from './types'
 import type { DepthUnitPreferences } from './depth-units'
 import { INFO_LAYER_REFRESH_MS } from './info-layers'
+import {
+  BATHYMETRY_MVT_REVISION,
+  EMPTY_BATHYMETRY_MVT,
+  type VectorTileRenderer
+} from './vector-tiles'
 
 const EMPTY_TILE = encodeRgbaPng(256, 256, new Uint8Array(256 * 256 * 4))
 const TILE_LAYERS = new Set<TileLayer>(['depth', 'confidence', 'age', 'change'])
@@ -29,6 +34,7 @@ export interface Runtime {
   autoBackfill: AutoBackfill
   depthUnits: DepthUnitPreferences
   renderer: TileRenderer
+  vectorRenderer: VectorTileRenderer
 }
 
 export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime | undefined): void {
@@ -195,6 +201,51 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
+  read.get('/tiles/:z/:x/:y.pbf', (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 0, 24)
+      const maxCoordinate = 2 ** z - 1
+      const x = integerParam(request, 'x', 0, maxCoordinate)
+      const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
+      const mode = (stringQuery(request, 'mode') ?? 'datum') as DepthMode
+      if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
+      const atMs = optionalTime(request, 'at') ?? Date.now()
+      const tideBucket =
+        mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
+      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}\"`
+      if (request.headers['if-none-match'] === etag) {
+        response.status(304).end()
+        return
+      }
+      const rendered = runtime.vectorRenderer.render({ z, x, y, mode, atMs })
+      response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+      response.set(
+        'Cache-Control',
+        mode === 'water'
+          ? `private, max-age=${CURRENT_TILE_CACHE_SECONDS}, must-revalidate`
+          : 'private, max-age=300'
+      )
+      response.set('ETag', etag)
+      response.set('X-Bathymetry-Cell-Count', String(rendered.cellCount))
+      response.set('X-Bathymetry-Cell-Meters', String(rendered.cellMeters))
+      if (rendered.projection) {
+        response.set('X-Bathymetry-Tide-Meters', String(rendered.projection.heightM))
+      }
+      response.send(rendered.tile)
+    } catch (error) {
+      if (error instanceof ProjectionUnavailableError) {
+        response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+        response.set('Cache-Control', 'no-store')
+        response.set('X-Bathymetry-Projection-Error', error.message)
+        response.send(EMPTY_BATHYMETRY_MVT)
+        return
+      }
+      sendError(response, error)
+    }
+  })
+
   // Routes registered directly on PluginRouter remain administrator-only.
   router.post('/admin/backfill', async (request: Request, response: Response) => {
     const runtime = requireRuntime(getRuntime, response)
@@ -224,7 +275,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.3.10' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.4.0' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
@@ -233,6 +284,7 @@ export function openApi(): object {
       '/changes': { get: operation('List suspected or confirmed seabed changes') },
       '/projection': { get: operation('Describe the current tide projection') },
       '/tiles/{z}/{x}/{y}.png': { get: operation('Render a translucent PNG tile') },
+      '/tiles/{z}/{x}/{y}.pbf': { get: operation('Render interactive S-57-style MVT cells') },
       '/admin/backfill': { post: operation('Import up to 31 days from Signal K History API') },
       '/admin/reprocess': { post: operation('Rebuild QC classifications and surface cells') }
     }
