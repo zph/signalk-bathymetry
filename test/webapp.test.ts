@@ -17,15 +17,18 @@ test('quality-control map renders live vectors without requesting PNG bathymetry
   assert.match(app, /depthLabelRelativeSize/)
 })
 
-test('measurement details distinguish sensor reference, offset, surface, datum, and tide', () => {
+test('measurement details distinguish sensor reference, offset, surface, tide level, and datum correction', () => {
   const app = readFileSync(join(process.cwd(), 'public/app.js'), 'utf8')
   for (const label of [
     'Sensor reading',
     'Waterline offset',
     'Depth below surface',
     'Datum-reduced depth',
-    'Tide correction'
+    'Tide level',
+    'Datum correction'
   ]) {
     assert.match(app, new RegExp(label))
   }
+  assert.match(app, /signedDepth\(item\.tideHeightM\)/)
+  assert.match(app, /signedDepth\(-item\.tideHeightM\)/)
 })
