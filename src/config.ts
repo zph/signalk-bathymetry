@@ -32,6 +32,7 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   overlayOpacity: 0.55,
   qcBaseChart: 'noaa-enc',
   showDepthLabels: true,
+  depthLabelRelativeSize: 1,
   minZoom: 8,
   maxZoom: 24,
   batchSize: 20,
@@ -71,6 +72,7 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     typeof config.showDepthLabels === 'boolean'
       ? config.showDepthLabels
       : DEFAULT_CONFIG.showDepthLabels
+  config.depthLabelRelativeSize = clamp(config.depthLabelRelativeSize, 0.5, 2)
   config.minZoom = Math.round(clamp(config.minZoom, 0, 22))
   config.maxZoom = Math.round(clamp(config.maxZoom, config.minZoom, 24))
   config.baseCellMeters = positive(config.baseCellMeters, DEFAULT_CONFIG.baseCellMeters)
@@ -185,7 +187,7 @@ export function pluginSchema(): object {
         0.75
       ),
       recencyHalfLifeDays: numberField('Confidence half-life (days)', 1, 36500, 1, 365),
-      overlayOpacity: numberField('Freeboard overlay opacity', 0, 1, 0.05, 0.55),
+      overlayOpacity: numberField('Vector chart opacity', 0, 1, 0.05, 0.55),
       qcBaseChart: {
         type: 'string',
         title: 'QC map backing chart id or name (blank for automatic NOAA ENC)',
@@ -196,6 +198,13 @@ export function pluginSchema(): object {
         title: 'Show depth numbers inside every displayed hex cell',
         default: true
       },
+      depthLabelRelativeSize: numberField(
+        'Depth label relative size (1 = normal)',
+        0.5,
+        2,
+        0.1,
+        1
+      ),
       instrumentMinM: numberField('Sounder minimum valid depth (m)', 0, 100, 0.1, 0.4),
       instrumentMaxM: numberField('Sounder maximum valid depth (m)', 1, 12000, 1, 120),
       historyProvider: {

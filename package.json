@@ -1,7 +1,7 @@
 {
   "name": "signalk-bathymetry",
-  "version": "0.4.1",
-  "description": "Source-aware local bathymetry, confidence surfaces, and Freeboard-SK overlays for Signal K",
+  "version": "0.5.0",
+  "description": "Source-aware local bathymetry and interactive vector cells for Signal K chartplotters",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -7,3 +7,12 @@ test('author styles cannot override hidden inspection panels', () => {
   const styles = readFileSync(join(process.cwd(), 'public/styles.css'), 'utf8')
   assert.match(styles, /\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/)
 })
+
+test('quality-control map renders live vectors without requesting PNG bathymetry', () => {
+  const app = readFileSync(join(process.cwd(), 'public/app.js'), 'utf8')
+  const html = readFileSync(join(process.cwd(), 'public/index.html'), 'utf8')
+  assert.doesNotMatch(app, /\.png/)
+  assert.doesNotMatch(html, /bathy-tiles/)
+  assert.match(html, /id="bathy-vectors"/)
+  assert.match(app, /depthLabelRelativeSize/)
+})

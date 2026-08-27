@@ -5,6 +5,7 @@ import {
   tileMercatorBounds
 } from './geo'
 import type { BathymetryStore } from './store'
+import { METRIC_DEPTH_UNITS, type DepthDisplayUnits } from './depth-units'
 import {
   aggregateOverviewCells,
   overviewCellMeters,
@@ -16,7 +17,7 @@ import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 const MVT_EXTENT = 4096
 export const BATHYMETRY_MVT_LAYER = 'DEPARE'
 export const BATHYMETRY_MVT_SOUNDINGS_LAYER = 'SOUNDG'
-export const BATHYMETRY_MVT_REVISION = 'mvt1'
+export const BATHYMETRY_MVT_REVISION = 'mvt2'
 
 export interface RenderedVectorTile {
   tile: Buffer
@@ -33,7 +34,8 @@ export class VectorTileRenderer {
   constructor(
     private readonly store: BathymetryStore,
     private readonly config: BathymetryConfig,
-    private readonly getTide: (atMs: number) => TideProjection | undefined
+    private readonly getTide: (atMs: number) => TideProjection | undefined,
+    private readonly getDepthUnits: () => DepthDisplayUnits = () => METRIC_DEPTH_UNITS
   ) {}
 
   render(options: {
@@ -92,7 +94,15 @@ export class VectorTileRenderer {
       projection
     )
     const features = cells.map((cell) =>
-      cellFeature(cell, bounds, cellMeters, options.mode, projection)
+      cellFeature(
+        cell,
+        bounds,
+        cellMeters,
+        options.mode,
+        projection,
+        this.config,
+        this.getDepthUnits()
+      )
     )
     const result: RenderedVectorTile = {
       tile: encodeVectorTile(features),
@@ -115,7 +125,9 @@ function cellFeature(
   bounds: ReturnType<typeof tileMercatorBounds>,
   cellMeters: number,
   mode: DepthMode,
-  projection: TideProjection | undefined
+  projection: TideProjection | undefined,
+  config: BathymetryConfig,
+  units: DepthDisplayUnits
 ): VectorFeature {
   const combinedSigmaM = projection
     ? Math.sqrt(cell.verticalSigmaM ** 2 + projection.sigmaM ** 2)
@@ -153,7 +165,11 @@ function cellFeature(
     BATHY_OLDEST_AT_MS: cell.oldestAtMs,
     BATHY_NEWEST_AT_MS: cell.newestAtMs,
     BATHY_UPDATED_AT_MS: cell.updatedAtMs,
-    BATHY_CHANGE_STATE: cell.changeState
+    BATHY_CHANGE_STATE: cell.changeState,
+    BATHY_SHOW_DEPTH_LABELS: config.showDepthLabels,
+    BATHY_LABEL_RELATIVE_SIZE: config.depthLabelRelativeSize,
+    BATHY_LABEL: depthLabel(depthM, units),
+    BATHY_LABEL_UNIT: units.symbol
   }
   if (cell.confidenceReasons?.length) {
     properties.BATHY_CONFIDENCE_REASONS = cell.confidenceReasons.join('|')
@@ -178,6 +194,13 @@ function cellFeature(
       y: Math.round(((bounds.maxY - center.y) / span) * MVT_EXTENT)
     }
   }
+}
+
+function depthLabel(depthM: number, units: DepthDisplayUnits): string {
+  const displayed = depthM * units.metersToDisplayFactor
+  const decimals = Math.abs(displayed) >= 10 ? 0 : units.decimals
+  const factor = 10 ** decimals
+  return (Math.floor(displayed * factor) / factor).toFixed(decimals)
 }
 
 function encodeVectorTile(features: readonly VectorFeature[]): Buffer {

@@ -8,7 +8,7 @@ const byId = (id) => document.getElementById(id)
 const elements = {
   map: byId('map'),
   baseTiles: byId('base-tiles'),
-  bathyTiles: byId('bathy-tiles'),
+  bathyVectors: byId('bathy-vectors'),
   annotations: byId('map-annotations'),
   selectedCell: byId('selected-cell'),
   boatMarker: byId('boat-marker'),
@@ -39,6 +39,7 @@ const state = {
   layer: 'depth',
   mode: 'datum',
   opacity: 0.7,
+  opacityInitialized: false,
   selected: undefined,
   renderFrame: undefined,
   pointer: undefined
@@ -99,7 +100,7 @@ function renderMap() {
   const height = elements.map.clientHeight
   if (!width || !height) return
   elements.baseTiles.replaceChildren()
-  elements.bathyTiles.replaceChildren()
+  elements.bathyVectors.replaceChildren()
 
   if (state.chart) {
     const sourceZoom = Math.max(
@@ -109,23 +110,129 @@ function renderMap() {
     addTileLayer(elements.baseTiles, chartTileTemplate(state.chart), sourceZoom, state.zoom)
   }
 
-  if (state.zoom >= Number(state.status?.config?.minZoom ?? 8)) {
-    const unitRevision = state.status?.depthDisplayUnits?.revision
-    const query = new URLSearchParams({ layer: state.layer, mode: state.mode })
-    if (unitRevision) query.set('units', unitRevision)
-    addTileLayer(
-      elements.bathyTiles,
-      `${API}/tiles/{z}/{x}/{y}.png?${query.toString()}`,
-      state.zoom,
-      state.zoom
-    )
-  }
-
-  elements.bathyTiles.style.opacity = String(state.opacity)
+  renderBathymetryCells(width, height)
+  elements.bathyVectors.style.opacity = String(state.opacity)
   elements.zoomLevel.textContent = String(state.zoom)
   elements.mapPosition.textContent = `${state.center.latitude.toFixed(5)}, ${state.center.longitude.toFixed(5)}`
   renderBoatMarker(width, height)
   renderSelectedCell(width, height)
+}
+
+function renderBathymetryCells(width, height) {
+  elements.bathyVectors.setAttribute('viewBox', `0 0 ${width} ${height}`)
+  if (state.zoom < Number(state.status?.config?.minZoom ?? 8)) return
+  const projection = currentProjection()
+  if (state.mode === 'water' && !projection) {
+    elements.mapMessage.textContent = 'Tide-adjusted depth is unavailable because no fresh matching tide projection exists.'
+    return
+  }
+  if (elements.mapMessage.textContent.startsWith('Tide-adjusted depth is unavailable')) {
+    elements.mapMessage.textContent = ''
+  }
+  const fragment = document.createDocumentFragment()
+  for (const cell of state.cells) {
+    const coordinates = cell.geometry?.coordinates?.[0]
+    if (!Array.isArray(coordinates)) continue
+    const points = coordinates.map(([longitude, latitude]) =>
+      mapPoint({ latitude, longitude }, width, height)
+    )
+    if (!points.some((point) => point.x > -40 && point.x < width + 40 && point.y > -40 && point.y < height + 40)) {
+      continue
+    }
+    const fill = cellColor(cell, projection)
+    if (!fill) continue
+    const polygon = svgElement('polygon')
+    polygon.setAttribute('points', points.map((point) => `${point.x},${point.y}`).join(' '))
+    polygon.setAttribute('fill', fill)
+    fragment.append(polygon)
+
+    if (state.layer !== 'depth' || !state.status?.config?.showDepthLabels) continue
+    const center = polygonCenter(coordinates)
+    if (!center) continue
+    const point = mapPoint(center, width, height)
+    const label = formatDepth(cellDepth(cell, projection))
+    const fontSize = 14 * Number(state.status?.config?.depthLabelRelativeSize || 1)
+    const cellWidth = Math.max(...points.map((item) => item.x)) - Math.min(...points.map((item) => item.x))
+    if (cellWidth < label.length * fontSize * .58 + 5) continue
+    const text = svgElement('text')
+    text.setAttribute('x', String(point.x))
+    text.setAttribute('y', String(point.y))
+    text.setAttribute('font-size', String(fontSize))
+    text.setAttribute('fill', '#ffffff')
+    text.setAttribute('stroke', confidenceColor(cell.confidence))
+    text.setAttribute('stroke-width', '4')
+    text.textContent = label
+    fragment.append(text)
+  }
+  elements.bathyVectors.append(fragment)
+}
+
+function svgElement(name) {
+  return document.createElementNS('http://www.w3.org/2000/svg', name)
+}
+
+function currentProjection() {
+  const tide = state.status?.capture?.latestTide
+  if (!tide || tide.stale || tide.datum !== state.status?.config?.targetDatum) return undefined
+  return tide
+}
+
+function cellDepth(cell, projection) {
+  if (!projection) return Number(cell.conservativeDepthM)
+  const sigma = Math.hypot(Number(cell.verticalSigmaM), Number(projection.sigmaM))
+  return Number(cell.renderDepthM) + Number(projection.heightM) - 1.645 * sigma
+}
+
+function cellColor(cell, projection) {
+  if (state.layer === 'confidence') return confidenceColor(cell.confidence)
+  if (state.layer === 'age') {
+    const freshness = 2 ** (-ageDays(cell.newestAtMs) / recencyHalfLifeDays())
+    return interpolateColor(freshness, [[0, [95, 95, 100]], [.5, [190, 135, 65]], [1, [45, 175, 120]]])
+  }
+  if (state.layer === 'change') {
+    return cell.changeState === 'stable' ? undefined : '#dc00aa'
+  }
+  const keel = Number(state.status?.config?.surfaceToKeelM || 0)
+  const danger = Number(state.status?.config?.dangerUnderKeelM || .75)
+  const depth = cellDepth(cell, projection)
+  if (projection) {
+    const blue = Math.max(danger * 2, keel * 2)
+    return interpolateColor(depth - keel, [
+      [-danger, [125, 20, 25]], [0, [220, 35, 30]], [danger, [245, 105, 25]],
+      [danger * 2, [245, 215, 65]], [blue, [216, 243, 255]],
+      [blue * 2, [132, 203, 244]], [blue * 4, [58, 143, 224]],
+      [Math.max(30, blue * 8), [18, 70, 171]]
+    ])
+  }
+  const safe = Math.max(.1, keel + danger)
+  const blue = Math.max(safe, keel * 3, keel + danger * 2)
+  return interpolateColor(depth, [
+    [-1, [135, 45, 35]], [0, [210, 45, 35]], [safe * .5, [245, 120, 35]],
+    [safe, [245, 215, 65]], [blue, [216, 243, 255]], [blue * 2, [132, 203, 244]],
+    [blue * 4, [58, 143, 224]], [Math.max(30, blue * 8), [18, 70, 171]]
+  ])
+}
+
+function confidenceColor(confidence) {
+  return interpolateColor(Number(confidence), [
+    [0, [145, 25, 40]], [.4, [190, 55, 35]], [.6, [175, 120, 10]],
+    [.8, [45, 140, 70]], [1, [15, 100, 60]]
+  ])
+}
+
+function interpolateColor(value, stops) {
+  if (value <= stops[0][0]) return `rgb(${stops[0][1].join(',')})`
+  if (value >= stops.at(-1)[0]) return `rgb(${stops.at(-1)[1].join(',')})`
+  for (let index = 1; index < stops.length; index += 1) {
+    const lower = stops[index - 1]
+    const upper = stops[index]
+    if (value > upper[0]) continue
+    const ratio = (value - lower[0]) / (upper[0] - lower[0])
+    const color = lower[1].map((channel, channelIndex) =>
+      Math.round(channel + (upper[1][channelIndex] - channel) * ratio)
+    )
+    return `rgb(${color.join(',')})`
+  }
 }
 
 function addTileLayer(pane, template, sourceZoom, displayZoom) {
@@ -558,6 +665,12 @@ async function refreshStatus() {
 }
 
 function renderStatus(data) {
+  if (!state.opacityInitialized) {
+    state.opacity = Number(data.config.overlayOpacity ?? .7)
+    elements.opacity.value = String(state.opacity)
+    elements.opacityOutput.textContent = `${Math.round(state.opacity * 100)}%`
+    state.opacityInitialized = true
+  }
   document.querySelector('.live-state').classList.toggle('offline', !data.capture.running)
   byId('capture-state').textContent = data.capture.running ? 'Recording' : 'Capture stopped'
   byId('source-samples').textContent = number(data.store.sourceSamples)
@@ -709,7 +822,7 @@ function configureControls() {
   elements.opacity.addEventListener('input', () => {
     state.opacity = Number(elements.opacity.value)
     elements.opacityOutput.textContent = `${Math.round(state.opacity * 100)}%`
-    elements.bathyTiles.style.opacity = String(state.opacity)
+    elements.bathyVectors.style.opacity = String(state.opacity)
   })
   const modal = byId('measurement-modal')
   byId('measurement-close').addEventListener('click', () => modal.close())

@@ -2,7 +2,7 @@
 
 A Signal K server plugin that records source-aware depth evidence, reduces it
 to a configured chart datum, detects contradictory seabed regimes, and exposes
-translucent Freeboard-SK overlays.
+interactive vector cells to Signal K chartplotters.
 
 > Supplemental local estimate only. This is not an official hydrographic
 > survey and must not be used as the primary source for navigation.
@@ -28,16 +28,12 @@ The full design and safety model are in
 - Fixed metric pointy-top hex cells with robust pass estimates, uncertainty,
   confidence, age decay, and asymmetric seabed-change handling. Touching cells
   render as one continuous measured swath without internal grid borders.
-- Transparent PNG layers for depth, confidence, age, and change, with optional
-  conservative depth numbers centered in cells at high zoom.
 - Interactive S-57-style MVT depth cells with meter-native depths, confidence,
   uncertainty, evidence counts, recency, and change metadata.
-- Two read-only Signal K chart resources discovered by Freeboard-SK:
-  chart-datum depth and tide-adjusted current under-keel safety.
-- Matching Freeboard information-layer resources that forcibly refresh their
-  visible XYZ tiles every 10 minutes, including while the map remains open.
+- One read-only chart-datum MVT resource discovered by Freeboard-SK and
+  Binnacle, with a provider-owned vector portrayal for Freeboard.
 - HTTP inspection API, administrator backfill/reprocessing endpoints, OpenAPI
-  metadata, and a small status/legend web app.
+  metadata, and a vector quality-control web app with live tide projection.
 
 ## Requirements and development
 
@@ -66,7 +62,8 @@ measured vessel offsets and tide datum before recording.
 - `stationaryWindowSeconds` and `stationaryMinimumSamples`: robust aggregation
   at anchor; defaults 60 seconds and 10 samples.
 - `baseCellMeters`, `recencyHalfLifeDays`, and change-confirmation thresholds.
-- `showDepthLabels` and `depthLabelMinZoom`; defaults show numbers from zoom 19.
+- `showDepthLabels` and `depthLabelRelativeSize`; defaults show normal-size
+  depth numbers. Relative size is bounded from 0.5 to 2.
 - `autoBackfillWhenEmpty`, `autoBackfillDays`, and
   `autoBackfillDelaySeconds`; defaults are enabled, 30 days, and 15 seconds.
 
@@ -84,50 +81,22 @@ tide (`surfaceToKeelM + dangerUnderKeelM`).
 
 ## Freeboard-SK
 
-Open Freeboard's chart/layer selector and enable one of:
+Open Freeboard's chart selector and enable **Local Bathymetry Cells -
+&lt;datum&gt;**. The chart is an MVT resource with S-57 `DEPARE` and `SOUNDG`
+layers. Freeboard uses the plugin's vector style, including `overlayOpacity`,
+`showDepthLabels`, and `depthLabelRelativeSize`.
 
-- **Local Bathymetry — &lt;datum&gt;** for the normal zero-datum surface.
-- **Local Bathymetry — Tide-adjusted now** for conservative current under-keel
-  safety coloring.
+Binnacle discovers the same chart resource, applies its day, dusk, or night-red
+portrayal, converts meter-native depth attributes at the display edge, and
+opens the cell evidence inspector on click. It also honors the label visibility
+and relative-size properties carried in every vector tile.
 
-Both are PNG XYZ overlays with alpha baked from `overlayOpacity`, so the normal
-chart remains visible. Disable the selected resource to return to the normal
-chart. At zoom 19 and above, each sufficiently large hex is labeled with its
-conservative depth: datum depth in the datum layer, or tide-projected water
-depth in the tide-adjusted layer. Labels use clean contrast-aware digits without
-an outline, grow with zoom, and continue across XYZ tile seams without clipping.
-Depths below 10 display units retain the configured decimal precision; depths
-of 10 or more omit decimals. All labels round down so they never overstate depth.
-The measured swath perimeter and change outlines use anti-aliased geometric
-strokes rather than pixel-traced borders. Gray stippling marks lower confidence and
-magenta cell borders mark a suspected or confirmed change.
-
-When zooming out below level 18, the renderer uses a world-aligned overview
-pyramid instead of letting 5 m cells disappear below one pixel. Overview hexes
-remain roughly 32 screen pixels wide so they are visible around Freeboard's
-vessel icon: 20 m at zoom 18, 40 m at zoom 17, 80 m at zoom 16, 160 m at zoom
-15, and 320 m at zoom 14. Native 5 m cells remain at zoom 19 and above. Their
-depth/clearance color is controlled by the shallowest accepted conservative
-source cell, never an average. Sparse source coverage lowers overview confidence
-and activates the gray stipple so a large abstracted hex is not presented as a
-fully surveyed area. `X-Bathymetry-Cell-Meters` reports the rendered resolution.
-
-The plugin reads Signal K's resolved `depth` unit preference once after startup,
-caches it in plugin data, and converts only the rendered numbers. Storage, QC,
-API fields, and safety settings remain SI meters. For a tide-adjusted overlay
-that must update while Freeboard remains open and stationary, enable **Local
-Bathymetry — Tide-adjusted live** under Freeboard's information/overlay layers.
-Freeboard actively clears and reloads that layer every 10 minutes. The matching
-chart resources remain available, but Freeboard's chart tile cache does not
-periodically evict already-visible tiles.
-
-Binnacle also discovers two **Local Bathymetry Cells** chart resources. These
-use live MVT tiles with S-57 `DEPARE` and `SOUNDG` source layers, so Binnacle
-renders the cell fills and depth labels with its ENC portrayal and can inspect a
-cell on click. Depth attributes remain in meters inside the tile. Binnacle
-converts them to the active Signal K depth unit only when displaying labels and
-cell details. The existing PNG resources remain available for Freeboard
-compatibility and for the confidence, age, and change raster views.
+Only chart-datum depth is advertised as a chart resource. A chartplotter can
+cache a stationary vector tile indefinitely, so advertising a
+`Tide-adjusted now` chart would eventually present stale water depth. The
+plugin's quality-control web app retains tide-adjusted depth, confidence,
+recency, and change views because it refreshes the underlying cells and tide
+projection while open.
 
 ## API
 
@@ -140,7 +109,7 @@ GET /cells?bbox=west,south,east,north
 GET /cells/lookup?latitude=&longitude=
 GET /changes?since=
 GET /projection?at=now
-GET /tiles/{z}/{x}/{y}.png?layer=depth|confidence|age|change&mode=datum|water
+GET /vector-style.json
 GET /tiles/{z}/{x}/{y}.pbf?mode=datum|water
 ```
 

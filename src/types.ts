@@ -51,6 +51,7 @@ export interface BathymetryConfig {
   overlayOpacity: number
   qcBaseChart: string
   showDepthLabels: boolean
+  depthLabelRelativeSize: number
   minZoom: number
   maxZoom: number
   batchSize: number

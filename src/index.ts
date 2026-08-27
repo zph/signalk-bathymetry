@@ -7,9 +7,7 @@ import { createChartProvider } from './charts'
 import { normalizeConfig, pluginSchema } from './config'
 import { HistoryBackfill } from './history-backfill'
 import { BathymetryStore } from './store'
-import { TileRenderer } from './tiles'
 import { DepthUnitPreferences } from './depth-units'
-import { createInfoLayerProvider } from './info-layers'
 import { VectorTileRenderer } from './vector-tiles'
 
 const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
@@ -19,7 +17,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
     id: 'signalk-bathymetry',
     name: 'Local Bathymetry',
     description:
-      'Builds a datum-reduced local bathymetry surface with confidence, change detection, and Freeboard overlays.',
+      'Builds a datum-reduced local bathymetry surface with confidence, change detection, and interactive vector cells.',
     schema: pluginSchema,
     start: (rawConfig) => {
       if (runtime) stopRuntime(runtime)
@@ -34,16 +32,11 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           app,
           join(dataDirectory, 'depth-display-units.json')
         )
-        const renderer = new TileRenderer(
+        const vectorRenderer = new VectorTileRenderer(
           store,
           config,
           (atMs) => capture.latestTideProjection(atMs),
           () => depthUnits.current()
-        )
-        const vectorRenderer = new VectorTileRenderer(
-          store,
-          config,
-          (atMs) => capture.latestTideProjection(atMs)
         )
         runtime = {
           config,
@@ -52,17 +45,9 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           history,
           autoBackfill,
           depthUnits,
-          renderer,
           vectorRenderer
         }
-        app.registerResourceProvider(createChartProvider(store, config, () => depthUnits.current()))
-        app.registerResourceProvider(
-          createInfoLayerProvider(
-            config,
-            () => depthUnits.current(),
-            join(dataDirectory, 'bathymetry-info-layers.json')
-          )
-        )
+        app.registerResourceProvider(createChartProvider(store, config))
         capture.start()
         autoBackfill.start()
         depthUnits.start()

@@ -1,33 +1,27 @@
 import type { PluginRouter } from '@signalk/server-api'
 import type { Request, Response } from 'express'
-import { encodeRgbaPng } from './png'
 import type { BathymetryStore } from './store'
 import {
   ProjectionUnavailableError,
   CELL_SIZE_SCALE_DEFAULT,
   CELL_SIZE_SCALE_MAX,
   CELL_SIZE_SCALE_MIN,
-  TILE_STYLE_REVISION,
-  type DepthMode,
-  type TileLayer,
-  type TileRenderer
+  type DepthMode
 } from './tiles'
 import type { CaptureEngine } from './capture'
 import type { HistoryBackfill } from './history-backfill'
 import type { AutoBackfill } from './auto-backfill'
 import type { BathymetryConfig, QcState, SurfaceCell } from './types'
 import type { DepthUnitPreferences } from './depth-units'
-import { INFO_LAYER_REFRESH_MS } from './info-layers'
+import { vectorStyle } from './vector-style'
 import {
   BATHYMETRY_MVT_REVISION,
   EMPTY_BATHYMETRY_MVT,
   type VectorTileRenderer
 } from './vector-tiles'
 
-const EMPTY_TILE = encodeRgbaPng(256, 256, new Uint8Array(256 * 256 * 4))
-const TILE_LAYERS = new Set<TileLayer>(['depth', 'confidence', 'age', 'change'])
 const DEPTH_MODES = new Set<DepthMode>(['datum', 'water'])
-const CURRENT_TILE_CACHE_SECONDS = INFO_LAYER_REFRESH_MS / 1000
+const CURRENT_TILE_CACHE_SECONDS = 600
 
 export interface Runtime {
   config: BathymetryConfig
@@ -36,7 +30,6 @@ export interface Runtime {
   history: HistoryBackfill
   autoBackfill: AutoBackfill
   depthUnits: DepthUnitPreferences
-  renderer: TileRenderer
   vectorRenderer: VectorTileRenderer
 }
 
@@ -153,62 +146,11 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
-  read.get('/tiles/:z/:x/:y.png', (request, response) => {
+  read.get('/vector-style.json', (_request, response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
-    try {
-      const z = integerParam(request, 'z', 0, 24)
-      const maxCoordinate = 2 ** z - 1
-      const x = integerParam(request, 'x', 0, maxCoordinate)
-      const y = integerParam(request, 'y', 0, maxCoordinate, '.png')
-      const layer = (stringQuery(request, 'layer') ?? 'depth') as TileLayer
-      const mode = (stringQuery(request, 'mode') ?? 'datum') as DepthMode
-      if (!TILE_LAYERS.has(layer)) throw new HttpError(400, 'Unknown tile layer')
-      if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
-      const atMs = optionalTime(request, 'at') ?? Date.now()
-      const cellSizeScale =
-        optionalNumberQuery(
-          request,
-          'cellScale',
-          CELL_SIZE_SCALE_MIN,
-          CELL_SIZE_SCALE_MAX
-        ) ?? CELL_SIZE_SCALE_DEFAULT
-      const tideBucket =
-        mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
-      const unitStatus = runtime.depthUnits.status()
-      const etag = `W/\"${TILE_STYLE_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${unitStatus.revision}\"`
-      if (request.headers['if-none-match'] === etag) {
-        response.status(304).end()
-        return
-      }
-      const rendered = runtime.renderer.render({ z, x, y, layer, mode, atMs, cellSizeScale })
-      response.set('Content-Type', 'image/png')
-      response.set(
-        'Cache-Control',
-        mode === 'water'
-          ? `private, max-age=${CURRENT_TILE_CACHE_SECONDS}, must-revalidate`
-          : 'private, max-age=300'
-      )
-      response.set('ETag', etag)
-      response.set('X-Bathymetry-Cell-Count', String(rendered.cellCount))
-      response.set('X-Bathymetry-Cell-Meters', String(rendered.cellMeters))
-      response.set('X-Bathymetry-Label-Count', String(rendered.labelCount))
-      response.set('X-Bathymetry-Depth-Unit', unitStatus.symbol)
-      if (rendered.projection) {
-        response.set('X-Bathymetry-Tide-Meters', String(rendered.projection.heightM))
-      }
-      response.send(rendered.png)
-    } catch (error) {
-      if (error instanceof ProjectionUnavailableError) {
-        // A transparent response keeps Freeboard usable while making the reason observable.
-        response.set('Content-Type', 'image/png')
-        response.set('Cache-Control', 'no-store')
-        response.set('X-Bathymetry-Projection-Error', error.message)
-        response.send(EMPTY_TILE)
-        return
-      }
-      sendError(response, error)
-    }
+    response.set('Cache-Control', 'no-cache')
+    response.json(vectorStyle(runtime.config))
   })
 
   read.get('/tiles/:z/:x/:y.pbf', (request, response) => {
@@ -231,7 +173,8 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
         ) ?? CELL_SIZE_SCALE_DEFAULT
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
-      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}\"`
+      const unitRevision = runtime.depthUnits.status().revision
+      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelRelativeSize}-${unitRevision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
@@ -292,7 +235,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.4.0' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.5.0' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
@@ -300,7 +243,7 @@ export function openApi(): object {
       '/cells/lookup': { get: operation('Look up the bathymetry cell at a position') },
       '/changes': { get: operation('List suspected or confirmed seabed changes') },
       '/projection': { get: operation('Describe the current tide projection') },
-      '/tiles/{z}/{x}/{y}.png': { get: operation('Render a translucent PNG tile') },
+      '/vector-style.json': { get: operation('Describe the Freeboard vector portrayal') },
       '/tiles/{z}/{x}/{y}.pbf': { get: operation('Render interactive S-57-style MVT cells') },
       '/admin/backfill': { post: operation('Import up to 31 days from Signal K History API') },
       '/admin/reprocess': { post: operation('Rebuild QC classifications and surface cells') }
@@ -330,11 +273,13 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     tideStationId: config.tideStationId,
     tideStationName: config.tideStationName,
     cellSizeM: config.baseCellMeters,
+    surfaceToKeelM: config.surfaceToKeelM,
     dangerUnderKeelM: config.dangerUnderKeelM,
     recencyHalfLifeDays: config.recencyHalfLifeDays,
     overlayOpacity: config.overlayOpacity,
     qcBaseChart: config.qcBaseChart,
     showDepthLabels: config.showDepthLabels,
+    depthLabelRelativeSize: config.depthLabelRelativeSize,
     minZoom: config.minZoom,
     maxZoom: config.maxZoom,
     autoBackfillWhenEmpty: config.autoBackfillWhenEmpty,

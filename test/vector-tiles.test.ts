@@ -13,7 +13,12 @@ import { sounding } from './helpers'
 
 test('vector renderer emits queryable S-57 DEPARE cells with quality metadata', (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-test-'))
-  const config = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  const config = normalizeConfig({
+    baseCellMeters: 10,
+    minZoom: 0,
+    maxZoom: 24,
+    depthLabelRelativeSize: 1.4
+  })
   const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
   t.after(() => {
     store.close()
@@ -55,6 +60,10 @@ test('vector renderer emits queryable S-57 DEPARE cells with quality metadata', 
   assert.equal(cell.properties.BATHY_SOUNDING_COUNT, 12)
   assert.equal(cell.properties.BATHY_OBSERVATION_COUNT, 1)
   assert.equal(cell.properties.BATHY_CHANGE_STATE, 'stable')
+  assert.equal(cell.properties.BATHY_SHOW_DEPTH_LABELS, true)
+  assert.equal(cell.properties.BATHY_LABEL_RELATIVE_SIZE, 1.4)
+  assert.equal(cell.properties.BATHY_LABEL, '5.5')
+  assert.equal(cell.properties.BATHY_LABEL_UNIT, 'm')
   assert.ok(Number(cell.properties.BATHY_CONFIDENCE) <= 0.25)
   assert.match(String(cell.properties.BATHY_CONFIDENCE_REASONS), /single_observation/)
   assert.equal(cell.properties.DRVAL1, cell.properties.BATHY_DEPTH_M)
