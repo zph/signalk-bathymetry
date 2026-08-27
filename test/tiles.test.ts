@@ -73,6 +73,11 @@ test('overview uses larger world-aligned hexes and the shallowest conservative c
   assert.equal(overviewCellMeters(5, 14), 320)
   assert.equal(overviewCellMeters(5, 13), 640)
   assert.equal(overviewCellMeters(5, 8), 640)
+  assert.equal(overviewCellMeters(5, 19, 0.5), 5)
+  assert.equal(overviewCellMeters(5, 18, 0.5), 10)
+  assert.equal(overviewCellMeters(5, 19, 2), 20)
+  assert.equal(overviewCellMeters(5, 20, 4), 20)
+  assert.equal(overviewCellMeters(5, 20, 0.5), 5)
 
   const common: SurfaceCell = {
     cellX: 0,

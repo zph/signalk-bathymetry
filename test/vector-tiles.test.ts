@@ -102,6 +102,31 @@ test('water MVT uses the conservative tide projection and retains tide quality',
   assert.ok(Number(feature.properties.BATHY_DEPTH_M) < 6.2)
 })
 
+test('vector renderer applies the requested zoom-relative cell-size scale', (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-scale-test-'))
+  const config = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
+  t.after(() => {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const input = sounding(config)
+  store.ingest([input])
+  const renderer = new VectorTileRenderer(store, config, () => undefined)
+  const tile = tileForPosition(input.longitude, input.latitude, 19)
+
+  assert.equal(
+    renderer.render({ z: 19, ...tile, mode: 'datum', atMs: input.observedAtMs, cellSizeScale: 0.5 })
+      .cellMeters,
+    10
+  )
+  assert.equal(
+    renderer.render({ z: 19, ...tile, mode: 'datum', atMs: input.observedAtMs, cellSizeScale: 2 })
+      .cellMeters,
+    40
+  )
+})
+
 function tileForPosition(longitude: number, latitude: number, z: number): { x: number; y: number } {
   const count = 2 ** z
   const latitudeRad = (latitude * Math.PI) / 180

@@ -13,6 +13,10 @@ import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
 const TILE_SIZE = 256
 const OVERVIEW_MAX_CELL_METERS = 640
 export const TILE_STYLE_REVISION = 'hex12'
+export const CELL_SIZE_SCALE_MIN = 0.5
+export const CELL_SIZE_SCALE_MAX = 4
+export const CELL_SIZE_SCALE_STEP = 0.25
+export const CELL_SIZE_SCALE_DEFAULT = 1
 
 export type TileLayer = 'depth' | 'confidence' | 'age' | 'change'
 export type DepthMode = 'datum' | 'water'
@@ -42,9 +46,14 @@ export class TileRenderer {
     layer: TileLayer
     mode: DepthMode
     atMs: number
+    cellSizeScale?: number
   }): RenderedTile {
     const rgba = new Uint8Array(TILE_SIZE * TILE_SIZE * 4)
-    const cellMeters = overviewCellMeters(this.config.baseCellMeters, options.z)
+    const cellMeters = overviewCellMeters(
+      this.config.baseCellMeters,
+      options.z,
+      options.cellSizeScale
+    )
     if (options.z < this.config.minZoom || options.z > this.config.maxZoom) {
       return {
         png: encodeRgbaPng(TILE_SIZE, TILE_SIZE, rgba),
@@ -271,13 +280,23 @@ export class TileRenderer {
   }
 }
 
-export function overviewCellMeters(baseCellMeters: number, zoom: number): number {
-  if (zoom >= 20) return baseCellMeters
+export function overviewCellMeters(
+  baseCellMeters: number,
+  zoom: number,
+  cellSizeScale = CELL_SIZE_SCALE_DEFAULT
+): number {
+  const boundedScale = Math.max(
+    CELL_SIZE_SCALE_MIN,
+    Math.min(CELL_SIZE_SCALE_MAX, cellSizeScale)
+  )
   // Double the world-space cell once per integer zoom below z20. Its screen-space
   // footprint therefore stays nearly constant when clients cross a fractional
   // zoom boundary instead of jumping fourfold between z19 and z18.
-  const scale = 2 ** (20 - Math.floor(zoom))
-  return Math.min(OVERVIEW_MAX_CELL_METERS, baseCellMeters * scale)
+  const zoomScale = 2 ** Math.max(0, 20 - Math.floor(zoom))
+  return Math.max(
+    baseCellMeters,
+    Math.min(OVERVIEW_MAX_CELL_METERS, baseCellMeters * zoomScale * boundedScale)
+  )
 }
 
 export function aggregateOverviewCells(

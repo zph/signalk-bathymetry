@@ -2,7 +2,13 @@ import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
 import { revisionFor, type DepthDisplayUnits } from './depth-units'
-import { TILE_STYLE_REVISION } from './tiles'
+import {
+  CELL_SIZE_SCALE_DEFAULT,
+  CELL_SIZE_SCALE_MAX,
+  CELL_SIZE_SCALE_MIN,
+  CELL_SIZE_SCALE_STEP,
+  TILE_STYLE_REVISION
+} from './tiles'
 
 const DATUM_ID = 'signalk-bathymetry-datum'
 const WATER_ID = 'signalk-bathymetry-water-now'
@@ -102,6 +108,13 @@ function vectorChartResource(
     layers: ['DEPARE', 'SOUNDG'],
     chartLayers: ['DEPARE', 'SOUNDG'],
     featureInfo: 'bathymetry-cell',
+    cellSizeControl: {
+      queryParameter: 'cellScale',
+      minimum: CELL_SIZE_SCALE_MIN,
+      maximum: CELL_SIZE_SCALE_MAX,
+      step: CELL_SIZE_SCALE_STEP,
+      default: CELL_SIZE_SCALE_DEFAULT
+    },
     defaultVisible
   }
 }

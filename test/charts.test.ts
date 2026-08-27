@@ -55,6 +55,13 @@ test('chart provider advertises datum and current-water XYZ overlays', async (t)
     assert.equal(resource.featureInfo, 'bathymetry-cell')
     assert.match(String(resource.url), /\{z\}\/\{x\}\/\{y\}\.pbf/)
     assert.equal(resource.url, resource.tilemapUrl)
+    assert.deepEqual(resource.cellSizeControl, {
+      queryParameter: 'cellScale',
+      minimum: 0.5,
+      maximum: 4,
+      step: 0.25,
+      default: 1
+    })
   }
   assert.equal(
     (resources['signalk-bathymetry-datum-vector'] as Record<string, unknown>).defaultVisible,

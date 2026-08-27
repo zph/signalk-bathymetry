@@ -36,8 +36,19 @@ export class VectorTileRenderer {
     private readonly getTide: (atMs: number) => TideProjection | undefined
   ) {}
 
-  render(options: { z: number; x: number; y: number; mode: DepthMode; atMs: number }): RenderedVectorTile {
-    const cellMeters = overviewCellMeters(this.config.baseCellMeters, options.z)
+  render(options: {
+    z: number
+    x: number
+    y: number
+    mode: DepthMode
+    atMs: number
+    cellSizeScale?: number
+  }): RenderedVectorTile {
+    const cellMeters = overviewCellMeters(
+      this.config.baseCellMeters,
+      options.z,
+      options.cellSizeScale
+    )
     if (options.z < this.config.minZoom || options.z > this.config.maxZoom) {
       return { tile: encodeVectorTile([]), cellCount: 0, cellMeters }
     }

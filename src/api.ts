@@ -4,6 +4,9 @@ import { encodeRgbaPng } from './png'
 import type { BathymetryStore } from './store'
 import {
   ProjectionUnavailableError,
+  CELL_SIZE_SCALE_DEFAULT,
+  CELL_SIZE_SCALE_MAX,
+  CELL_SIZE_SCALE_MIN,
   TILE_STYLE_REVISION,
   type DepthMode,
   type TileLayer,
@@ -163,15 +166,22 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       if (!TILE_LAYERS.has(layer)) throw new HttpError(400, 'Unknown tile layer')
       if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
       const atMs = optionalTime(request, 'at') ?? Date.now()
+      const cellSizeScale =
+        optionalNumberQuery(
+          request,
+          'cellScale',
+          CELL_SIZE_SCALE_MIN,
+          CELL_SIZE_SCALE_MAX
+        ) ?? CELL_SIZE_SCALE_DEFAULT
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
       const unitStatus = runtime.depthUnits.status()
-      const etag = `W/\"${TILE_STYLE_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${Number(runtime.config.showDepthLabels)}-${unitStatus.revision}\"`
+      const etag = `W/\"${TILE_STYLE_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${layer}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${unitStatus.revision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
       }
-      const rendered = runtime.renderer.render({ z, x, y, layer, mode, atMs })
+      const rendered = runtime.renderer.render({ z, x, y, layer, mode, atMs, cellSizeScale })
       response.set('Content-Type', 'image/png')
       response.set(
         'Cache-Control',
@@ -212,14 +222,21 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const mode = (stringQuery(request, 'mode') ?? 'datum') as DepthMode
       if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
       const atMs = optionalTime(request, 'at') ?? Date.now()
+      const cellSizeScale =
+        optionalNumberQuery(
+          request,
+          'cellScale',
+          CELL_SIZE_SCALE_MIN,
+          CELL_SIZE_SCALE_MAX
+        ) ?? CELL_SIZE_SCALE_DEFAULT
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
-      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}\"`
+      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
       }
-      const rendered = runtime.vectorRenderer.render({ z, x, y, mode, atMs })
+      const rendered = runtime.vectorRenderer.render({ z, x, y, mode, atMs, cellSizeScale })
       response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
       response.set(
         'Cache-Control',
@@ -357,6 +374,21 @@ function stringQuery(request: Request, key: string): string | undefined {
 
 function numberQuery(request: Request, key: string, minimum: number, maximum: number): number {
   const value = Number(stringQuery(request, key))
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new HttpError(400, `${key} must be between ${minimum} and ${maximum}`)
+  }
+  return value
+}
+
+function optionalNumberQuery(
+  request: Request,
+  key: string,
+  minimum: number,
+  maximum: number
+): number | undefined {
+  const raw = stringQuery(request, key)
+  if (!raw) return undefined
+  const value = Number(raw)
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
     throw new HttpError(400, `${key} must be between ${minimum} and ${maximum}`)
   }
