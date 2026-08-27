@@ -274,6 +274,7 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     tideStationName: config.tideStationName,
     cellSizeM: config.baseCellMeters,
     surfaceToKeelM: config.surfaceToKeelM,
+    surfaceToTransducerM: config.surfaceToTransducerM,
     dangerUnderKeelM: config.dangerUnderKeelM,
     recencyHalfLifeDays: config.recencyHalfLifeDays,
     overlayOpacity: config.overlayOpacity,

@@ -40,7 +40,38 @@ test('ingest is deduplicated and retains the datum reduction', (t) => {
   assert.ok(cell.confidenceReasons?.includes('single_pass'))
   const raw = store.listSoundings({ limit: 10 })
   assert.equal(raw[0]?.datumDepthM, 5.5)
+  assert.equal(raw[0]?.depthReference, 'belowKeel')
+  assert.equal(raw[0]?.surfaceToKeelM, config.surfaceToKeelM)
+  assert.equal(raw[0]?.surfaceToTransducerM, undefined)
+  assert.equal(raw[0]?.belowSurfaceDepthM, 5 + config.surfaceToKeelM)
   assert.equal(raw[0]?.qcState, 'accepted')
+})
+
+test('raw sounding records expose the offset and below-surface depth for every reference', (t) => {
+  const { store, config } = withStore(t)
+  const transducerInput = sounding(config, {
+    observedAtMs: Date.UTC(2026, 0, 1),
+    passId: 'transducer',
+    rawDepthM: 4,
+    depthReference: 'belowTransducer',
+    surfaceToTransducerM: 0.6,
+    datumDepthM: 3.6
+  })
+  delete transducerInput.surfaceToKeelM
+  const surfaceInput = sounding(config, {
+    observedAtMs: Date.UTC(2026, 0, 2),
+    passId: 'surface',
+    rawDepthM: 5,
+    depthReference: 'belowSurface',
+    datumDepthM: 4
+  })
+  delete surfaceInput.surfaceToKeelM
+  store.ingest([transducerInput, surfaceInput])
+
+  const [surface, transducer] = store.listSoundings({ limit: 10 })
+  assert.equal(surface?.belowSurfaceDepthM, 5)
+  assert.equal(transducer?.surfaceToTransducerM, 0.6)
+  assert.equal(transducer?.belowSurfaceDepthM, 4.6)
 })
 
 test('a weak isolated depth disagreement is penalized by stronger adjacent cells', (t) => {

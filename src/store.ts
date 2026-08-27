@@ -291,6 +291,7 @@ export class BathymetryStore {
         SELECT r.id, r.observed_at_ms, r.origin, r.context,
           r.lat_e7, r.lon_e7, r.position_source,
           r.depth_raw_mm, r.depth_reference, r.depth_source,
+          r.surface_to_keel_mm, r.surface_to_transducer_mm,
           r.tide_height_mm, r.tide_datum, r.tide_station_id, r.tide_station_name,
           r.datum_depth_mm, r.vertical_sigma_mm, r.pass_id,
           r.aggregation_kind, r.sample_count, r.rejected_sample_count,
@@ -313,6 +314,9 @@ export class BathymetryStore {
       rawDepthM: Number(row.depth_raw_mm) / 1000,
       depthReference: row.depth_reference,
       depthSource: row.depth_source,
+      surfaceToKeelM: millimetersToOptionalMeters(row.surface_to_keel_mm),
+      surfaceToTransducerM: millimetersToOptionalMeters(row.surface_to_transducer_mm),
+      belowSurfaceDepthM: belowSurfaceDepth(row),
       tideHeightM: Number(row.tide_height_mm) / 1000,
       datum: row.tide_datum,
       tideStationId: row.tide_station_id,
@@ -871,6 +875,22 @@ function clusterIsQualified(cluster: DepthCluster, config: BathymetryConfig): bo
 
 function toMillimeters(value: number | undefined): number | null {
   return value === undefined ? null : Math.round(value * 1000)
+}
+
+function millimetersToOptionalMeters(value: unknown): number | undefined {
+  return value === null || value === undefined ? undefined : Number(value) / 1000
+}
+
+function belowSurfaceDepth(row: Record<string, unknown>): number | undefined {
+  const rawDepthM = Number(row.depth_raw_mm) / 1000
+  if (row.depth_reference === 'belowSurface') return rawDepthM
+  const offset =
+    row.depth_reference === 'belowKeel'
+      ? millimetersToOptionalMeters(row.surface_to_keel_mm)
+      : row.depth_reference === 'belowTransducer'
+        ? millimetersToOptionalMeters(row.surface_to_transducer_mm)
+        : undefined
+  return offset === undefined ? undefined : rawDepthM + offset
 }
 
 function toScaled(value: number | undefined, scale: number): number | null {

@@ -53,7 +53,9 @@ measured vessel offsets and tide datum before recording.
 
 ## Important configuration
 
-- `depthPath` and optional `depthSource`: the authoritative sounder input.
+- `depthPath` and optional `depthSource`: the authoritative sounder input. New installations default
+  to the direct `environment.depth.belowTransducer` measurement; below-keel and below-surface inputs
+  remain supported and retain their reference on every record.
 - `surfaceToKeelM` / `surfaceToTransducerM`: measured vertical geometry.
 - `targetDatum`, `tideStationId`, and `tideStationName`: never inferred or
   silently mixed.

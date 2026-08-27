@@ -2,7 +2,7 @@ import type { BathymetryConfig, DepthReference } from './types'
 
 export const DEFAULT_CONFIG: BathymetryConfig = {
   positionPath: 'navigation.position',
-  depthPath: 'environment.depth.belowKeel',
+  depthPath: 'environment.depth.belowTransducer',
   surfaceToKeelM: 1.5,
   surfaceToTransducerM: 0.5,
   targetDatum: 'MLLW',

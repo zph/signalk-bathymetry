@@ -2,6 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeConfig, pluginSchema } from '../src/config'
 
+test('raw transducer depth is the default input because it has direct sensor provenance', () => {
+  assert.equal(normalizeConfig({}).depthPath, 'environment.depth.belowTransducer')
+  const properties = (pluginSchema() as { properties: Record<string, Record<string, unknown>> })
+    .properties
+  assert.equal(properties.depthPath?.default, 'environment.depth.belowTransducer')
+})
+
 test('position path defaults to navigation.position and accepts a custom Signal K path', () => {
   assert.equal(normalizeConfig({}).positionPath, 'navigation.position')
   assert.equal(

@@ -586,15 +586,21 @@ function openMeasurement(item) {
   const position = item.position
     ? `${Number(item.position.latitude).toFixed(7)}, ${Number(item.position.longitude).toFixed(7)}`
     : 'Unavailable'
+  const belowSurfaceDepthM = Number.isFinite(item.belowSurfaceDepthM)
+    ? item.belowSurfaceDepthM
+    : item.datumDepthM + item.tideHeightM
+  const waterlineOffsetM = belowSurfaceDepthM - item.rawDepthM
   const details = [
     ['Observed', new Date(item.observedAt).toLocaleString()],
-    ['Raw sensor depth', `${formatDepth(item.rawDepthM)} ${depthSymbol()} · ${friendlyDepthReference(item.depthReference)}`],
+    ['Sensor reading', `${formatDepth(item.rawDepthM)} ${depthSymbol()} · ${friendlyDepthReference(item.depthReference)}`],
+    ['Waterline offset', `+${formatDepth(waterlineOffsetM)} ${depthSymbol()}`],
+    ['Depth below surface', `${formatDepth(belowSurfaceDepthM)} ${depthSymbol()}`],
     ['Datum-reduced depth', `${formatDepth(item.datumDepthM)} ${depthSymbol()} · ${item.datum}`],
     ['Vertical uncertainty', `±${formatDepth(item.verticalSigmaM)} ${depthSymbol()} (1σ)`],
     ['Position', position],
     ['Position source', item.positionSource],
     ['Depth source', item.depthSource],
-    ['Tide correction', `${formatDepth(item.tideHeightM)} ${depthSymbol()} · ${item.tideStationName}`],
+    ['Tide correction', `−${formatDepth(item.tideHeightM)} ${depthSymbol()} · ${item.tideStationName}`],
     ['Tide station id', item.tideStationId],
     ['Origin / context', `${item.origin} · ${item.context}`],
     ['Aggregation', String(item.aggregationKind || 'point').replaceAll('_', ' ')],
