@@ -14,3 +14,15 @@ test('position path defaults to navigation.position and accepts a custom Signal 
     .properties
   assert.equal(properties.positionPath?.default, 'navigation.position')
 })
+
+test('surface cell size centers the five-meter default in its slider range', () => {
+  const properties = (pluginSchema() as { properties: Record<string, Record<string, unknown>> })
+    .properties
+  const field = properties.baseCellMeters
+
+  assert.equal(field?.minimum, 1)
+  assert.equal(field?.maximum, 9)
+  assert.equal(field?.multipleOf, 1)
+  assert.equal(field?.default, 5)
+  assert.equal((Number(field?.minimum) + Number(field?.maximum)) / 2, field?.default)
+})

@@ -176,7 +176,7 @@ export function pluginSchema(): object {
         1,
         10
       ),
-      baseCellMeters: numberField('Surface cell size (m)', 1, 100, 1, 5),
+      baseCellMeters: numberField('Surface cell size (m)', 1, 9, 1, 5),
       dangerUnderKeelM: numberField(
         'Danger threshold: under-keel clearance (m)',
         0,
