@@ -652,11 +652,15 @@ export class BathymetryStore {
 
     const activeRows = rows.filter((row) => activeIds.has(row.id))
     const passDepths = active.passes.map((pass) => pass.depthM)
-    const measurementSigmaM = median(activeRows.map((row) => row.vertical_sigma_mm / 1000))
-    const passRepeatSigmaM = robustSigma(passDepths)
+    const uncertaintyRows = shallowCandidate
+      ? rows.filter((row) => shallowCandidate.passes.some((pass) => pass.soundingIds.includes(row.id)))
+      : activeRows
+    const uncertaintyPasses = shallowCandidate ? shallowCandidate.passes : active.passes
+    const measurementSigmaM = median(uncertaintyRows.map((row) => row.vertical_sigma_mm / 1000))
+    const passRepeatSigmaM = robustSigma(uncertaintyPasses.map((pass) => pass.depthM))
     const withinVisitSigmaM = median(
-      active.passes.map((pass) => {
-        const passRows = activeRows.filter((row) => row.pass_id === pass.passId)
+      uncertaintyPasses.map((pass) => {
+        const passRows = uncertaintyRows.filter((row) => row.pass_id === pass.passId)
         return robustSigma(passRows.map((row) => row.datum_depth_mm / 1000))
       })
     )

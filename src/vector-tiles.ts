@@ -169,7 +169,8 @@ function cellFeature(
     BATHY_SHOW_DEPTH_LABELS: config.showDepthLabels,
     BATHY_LABEL_RELATIVE_SIZE: config.depthLabelRelativeSize,
     BATHY_LABEL: depthLabel(depthM, units),
-    BATHY_LABEL_UNIT: units.symbol
+    BATHY_LABEL_UNIT: units.symbol,
+    BATHY_SAFETY_THRESHOLD_M: config.surfaceToKeelM + config.dangerUnderKeelM,
   }
   if (cell.confidenceReasons?.length) {
     properties.BATHY_CONFIDENCE_REASONS = cell.confidenceReasons.join('|')
