@@ -664,8 +664,15 @@ export class BathymetryStore {
         return robustSigma(passRows.map((row) => row.datum_depth_mm / 1000))
       })
     )
+    // A single sounding's sensor, offset, and tide terms are shared systematic uncertainty and
+    // must not vanish merely because more samples arrived. Repeatability across independent passes
+    // is different: the uncertainty of the cell mean improves with the number of passes. Keep the
+    // systematic floor, then reduce only the independent pass and within-pass components.
+    const independentPasses = Math.max(1, uncertaintyPasses.length)
     const sigmaM = Math.sqrt(
-      measurementSigmaM ** 2 + passRepeatSigmaM ** 2 + withinVisitSigmaM ** 2
+      measurementSigmaM ** 2 +
+        passRepeatSigmaM ** 2 / independentPasses +
+        withinVisitSigmaM ** 2 / independentPasses
     )
     const renderDepthM = shallowCandidate ? shallowCandidate.centerM : active.centerM
     const conservativeDepthM = renderDepthM - 1.645 * sigmaM
