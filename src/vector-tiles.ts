@@ -132,9 +132,19 @@ function cellFeature(
   const combinedSigmaM = projection
     ? Math.sqrt(cell.verticalSigmaM ** 2 + projection.sigmaM ** 2)
     : cell.verticalSigmaM
+  // The chart's primary depth follows the configured display estimate. The
+  // conservative default keeps the shallow-biased 95 percent lower bound; the
+  // predicted option shows the best estimate without the safety margin. The
+  // conservative and robust depths always travel as their own properties so
+  // consumers can still read both.
+  const displayPredicted = config.displayDepth === 'predicted'
   const depthM = projection
-    ? cell.renderDepthM + projection.heightM - 1.645 * combinedSigmaM
-    : cell.conservativeDepthM
+    ? cell.renderDepthM +
+      projection.heightM -
+      (displayPredicted ? 0 : 1.645 * combinedSigmaM)
+    : displayPredicted
+      ? cell.renderDepthM
+      : cell.conservativeDepthM
   const span = bounds.maxX - bounds.minX
   const ring = hexCellVertices(cell.cellX, cell.cellY, cellMeters).map((vertex) => ({
     x: Math.round(((vertex.x - bounds.minX) / span) * MVT_EXTENT),
@@ -166,6 +176,7 @@ function cellFeature(
     BATHY_NEWEST_AT_MS: cell.newestAtMs,
     BATHY_UPDATED_AT_MS: cell.updatedAtMs,
     BATHY_CHANGE_STATE: cell.changeState,
+    BATHY_DISPLAY_KIND: displayPredicted ? 'predicted' : 'conservative',
     BATHY_SHOW_DEPTH_LABELS: config.showDepthLabels,
     BATHY_LABEL_RELATIVE_SIZE: config.depthLabelRelativeSize,
     BATHY_LABEL: depthLabel(depthM, units),

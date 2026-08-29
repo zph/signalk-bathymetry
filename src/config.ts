@@ -1,4 +1,4 @@
-import type { BathymetryConfig, DepthReference } from './types'
+import type { BathymetryConfig, DepthDisplayMode, DepthReference } from './types'
 
 export const DEFAULT_CONFIG: BathymetryConfig = {
   positionPath: 'navigation.position',
@@ -33,6 +33,7 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   qcBaseChart: 'noaa-enc',
   showDepthLabels: true,
   depthLabelRelativeSize: 1,
+  displayDepth: 'conservative' as DepthDisplayMode,
   minZoom: 8,
   maxZoom: 24,
   batchSize: 20,
@@ -73,6 +74,8 @@ export function normalizeConfig(raw: object): BathymetryConfig {
       ? config.showDepthLabels
       : DEFAULT_CONFIG.showDepthLabels
   config.depthLabelRelativeSize = clamp(config.depthLabelRelativeSize, 0.5, 2)
+  config.displayDepth =
+    config.displayDepth === 'predicted' ? 'predicted' : DEFAULT_CONFIG.displayDepth
   config.minZoom = Math.round(clamp(config.minZoom, 0, 22))
   config.maxZoom = Math.round(clamp(config.maxZoom, config.minZoom, 24))
   config.baseCellMeters = positive(config.baseCellMeters, DEFAULT_CONFIG.baseCellMeters)
@@ -205,6 +208,15 @@ export function pluginSchema(): object {
         0.1,
         1
       ),
+      displayDepth: {
+        type: 'string',
+        title: 'Displayed depth estimate',
+        description:
+          'Conservative shows the shallow-biased 95 percent lower bound (default, safest). ' +
+          'Predicted shows the best depth estimate without the safety margin.',
+        default: 'conservative',
+        enum: ['conservative', 'predicted']
+      },
       instrumentMinM: numberField('Sounder minimum valid depth (m)', 0, 100, 0.1, 0.4),
       instrumentMaxM: numberField('Sounder maximum valid depth (m)', 1, 12000, 1, 120),
       historyProvider: {

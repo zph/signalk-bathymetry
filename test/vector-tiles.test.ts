@@ -137,6 +137,68 @@ test('vector renderer applies the requested zoom-relative cell-size scale', (t) 
   )
 })
 
+test('predicted display depth publishes the best estimate without the safety margin', (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-predicted-test-'))
+  const config = normalizeConfig({
+    baseCellMeters: 10,
+    minZoom: 0,
+    maxZoom: 24,
+    displayDepth: 'predicted'
+  })
+  const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
+  t.after(() => {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const input = sounding(config, {
+    datumDepthM: 6.25,
+    rawDepthM: 5.75,
+    verticalSigmaM: 0.4,
+    sampleCount: 12,
+    aggregationKind: 'stationary_window'
+  })
+  store.ingest([input])
+  const z = 20
+  const tile = tileForPosition(input.longitude, input.latitude, z)
+  const rendered = new VectorTileRenderer(store, config, () => undefined).render({
+    z,
+    ...tile,
+    mode: 'datum',
+    atMs: input.observedAtMs
+  })
+  const predicted = decodeTile(rendered.tile).features.find(
+    (feature) => feature.properties.BATHY_CELL_X !== undefined
+  )
+  assert.ok(predicted)
+  assert.equal(predicted.properties.BATHY_DISPLAY_KIND, 'predicted')
+  // The primary depth is the render (best-estimate) depth, not the conservative
+  // bound, and both facts still travel separately.
+  assert.equal(predicted.properties.BATHY_DEPTH_M, predicted.properties.BATHY_RENDER_DEPTH_M)
+  assert.ok(
+    Number(predicted.properties.BATHY_CONSERVATIVE_DEPTH_M) <
+      Number(predicted.properties.BATHY_RENDER_DEPTH_M)
+  )
+  assert.equal(predicted.properties.DRVAL1, predicted.properties.BATHY_DEPTH_M)
+
+  // The conservative default keeps the shallow-biased primary depth.
+  const safeConfig = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  const safeStore = new BathymetryStore(join(directory, 'safe.sqlite'), safeConfig)
+  t.after(() => safeStore.close())
+  safeStore.ingest([input])
+  const safeRendered = new VectorTileRenderer(safeStore, safeConfig, () => undefined).render({
+    z,
+    ...tile,
+    mode: 'datum',
+    atMs: input.observedAtMs
+  })
+  const safe = decodeTile(safeRendered.tile).features.find(
+    (feature) => feature.properties.BATHY_CELL_X !== undefined
+  )
+  assert.ok(safe)
+  assert.equal(safe.properties.BATHY_DISPLAY_KIND, 'conservative')
+  assert.equal(safe.properties.BATHY_DEPTH_M, safe.properties.BATHY_CONSERVATIVE_DEPTH_M)
+})
+
 test('overview aggregation reports coverage without capping member confidence', (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-coverage-test-'))
   const config = normalizeConfig({ baseCellMeters: 5, minZoom: 0, maxZoom: 24 })

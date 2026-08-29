@@ -18,6 +18,9 @@ export interface TimestampedValue<T> {
   source: string
 }
 
+/** Primary depth estimate published on the chart tiles. */
+export type DepthDisplayMode = 'conservative' | 'predicted'
+
 export interface BathymetryConfig {
   positionPath: string
   depthPath: string
@@ -51,6 +54,8 @@ export interface BathymetryConfig {
   overlayOpacity: number
   qcBaseChart: string
   showDepthLabels: boolean
+  /** Which depth estimate the chart tiles publish as their primary depth. */
+  displayDepth: DepthDisplayMode
   depthLabelRelativeSize: number
   minZoom: number
   maxZoom: number
