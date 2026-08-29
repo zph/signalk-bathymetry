@@ -175,6 +175,9 @@ function cellFeature(
   if (cell.confidenceReasons?.length) {
     properties.BATHY_CONFIDENCE_REASONS = cell.confidenceReasons.join('|')
   }
+  if (cell.coverage !== undefined) {
+    properties.BATHY_COVERAGE = cell.coverage
+  }
   if (cell.neighborSupportCount !== undefined) {
     properties.BATHY_NEIGHBOR_SUPPORT_COUNT = cell.neighborSupportCount
   }

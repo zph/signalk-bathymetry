@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { normalizeConfig } from '../src/config'
+import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
 import {
   BATHYMETRY_MVT_LAYER,
@@ -134,6 +135,94 @@ test('vector renderer applies the requested zoom-relative cell-size scale', (t) 
       .cellMeters,
     40
   )
+})
+
+test('overview aggregation reports coverage without capping member confidence', (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-coverage-test-'))
+  const config = normalizeConfig({ baseCellMeters: 5, minZoom: 0, maxZoom: 24 })
+  const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
+  t.after(() => {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  // Four adjacent 5 m base cells whose centers round into the same 20 m overview
+  // cell at zoom 18, measured across three passes and two sources each.
+  const children: Array<{ x: number; y: number; datumDepthM: number }> = [
+    { x: 0, y: 0, datumDepthM: 5 },
+    { x: 1, y: 0, datumDepthM: 5 },
+    { x: 0, y: 1, datumDepthM: 5 },
+    { x: 1, y: 1, datumDepthM: 3 }
+  ]
+  const now = Date.now()
+  for (const child of children) {
+    const center = hexCellCenter(child.x, child.y, 5)
+    const position = mercatorToLonLat(center.x, center.y)
+    const resolved = cellForPosition(position, 5)
+    assert.ok(resolved.x === child.x && resolved.y === child.y, 'hex round trip')
+    for (let pass = 0; pass < 3; pass += 1) {
+      store.ingest([
+        sounding(config, {
+          latitude: position.latitude,
+          longitude: position.longitude,
+          observedAtMs: now - (pass + 1) * 86_400_000,
+          ingestedAtMs: now,
+          trackId: `track-${child.x}-${child.y}-${pass}`,
+          passId: `pass-${child.x}-${child.y}-${pass}`,
+          datumDepthM: child.datumDepthM,
+          rawDepthM: child.datumDepthM,
+          tideHeightM: 0,
+          verticalSigmaM: 0.3,
+          depthSource: pass === 0 ? 'n2k.sounder' : 'derived.plugin'
+        })
+      ])
+    }
+  }
+  const renderer = new VectorTileRenderer(store, config, () => undefined)
+  const tile = tileForPosition(0, 0, 18)
+  const overview = renderer.render({ z: 18, ...tile, mode: 'datum', atMs: now })
+  assert.equal(overview.cellMeters, 20)
+  const overviewCell = decodeTile(overview.tile)
+    .features.find(
+      (feature) => feature.properties.BATHY_CELL_METERS === 20
+    )
+  assert.ok(overviewCell)
+  assert.equal(overviewCell.properties.BATHY_CELL_X, 0)
+  assert.equal(overviewCell.properties.BATHY_CELL_Y, 0)
+  // Four measured base cells out of sixteen expected: coverage 0.25.
+  assert.ok(Math.abs(Number(overviewCell.properties.BATHY_COVERAGE) - 0.25) < 1e-9)
+  // The confidence stays the controlling member's evidence quality instead of
+  // being scaled by the 0.5 coverage-root the old aggregation applied.
+  for (const child of children) {
+    const center = hexCellCenter(child.x, child.y, 5)
+    const position = mercatorToLonLat(center.x, center.y)
+    const z20 = renderer.render({
+      z: 20,
+      ...tileForPosition(position.longitude, position.latitude, 20),
+      mode: 'datum',
+      atMs: now
+    })
+    assert.equal(z20.cellMeters, 5)
+    const base = decodeTile(z20.tile).features.find(
+      (feature) =>
+        feature.properties.BATHY_CELL_X === child.x &&
+        feature.properties.BATHY_CELL_Y === child.y
+    )
+    assert.ok(base, `base cell ${child.x}:${child.y} missing`)
+    // Base cells measure one grid position and carry no coverage fact.
+    assert.equal(base.properties.BATHY_COVERAGE, undefined)
+    if (child.datumDepthM === 3) {
+      // The shallowest member controls the overview cell, so its confidence
+      // must survive aggregation uncapped.
+      assert.ok(Number(base.properties.BATHY_CONFIDENCE) > 0.5)
+      assert.ok(
+        Math.abs(
+          Number(overviewCell.properties.BATHY_CONFIDENCE) -
+            Number(base.properties.BATHY_CONFIDENCE)
+        ) < 1e-9,
+        'overview confidence must equal the controlling member confidence'
+      )
+    }
+  }
 })
 
 function tileForPosition(longitude: number, latitude: number, z: number): { x: number; y: number } {

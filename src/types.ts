@@ -108,6 +108,9 @@ export interface SurfaceCell {
   verticalSigmaM: number
   confidence: number
   confidenceReasons?: string[]
+  // Fraction of an overview cell's expected base cells that carry measurements, 0..1. Present only
+  // on aggregated overview cells; base cells measure one grid position and carry no coverage.
+  coverage?: number
   neighborSupportCount?: number
   neighborDepthDeltaM?: number
   soundingCount: number

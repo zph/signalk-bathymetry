@@ -55,14 +55,18 @@ export function aggregateOverviewCells(
         ? candidate
         : shallowest
     )
-    const coverageConfidence = Math.sqrt(
-      Math.min(1, group.members.length / expectedSourceCells)
-    )
+    // Coverage describes how much of the overview cell the swath measured; the
+    // confidence stays the controlling member's evidence quality. Capping the
+    // confidence by coverage labeled a densely measured swath 'weak evidence'
+    // even though every measured meter carried thousands of samples, so the two
+    // now travel as separate facts.
+    const coverage = Math.min(1, group.members.length / expectedSourceCells)
     return {
       ...controlling,
       cellX: group.cellX,
       cellY: group.cellY,
-      confidence: Math.min(controlling.confidence, coverageConfidence),
+      confidence: controlling.confidence,
+      coverage,
       soundingCount: group.members.reduce((total, cell) => total + cell.soundingCount, 0),
       observationCount: group.members.reduce((total, cell) => total + cell.observationCount, 0),
       passCount: Math.max(...group.members.map((cell) => cell.passCount)),
