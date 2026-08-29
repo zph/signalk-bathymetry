@@ -174,7 +174,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
       const unitRevision = runtime.depthUnits.status().revision
-      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelRelativeSize}-${unitRevision}\"`
+      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelRelativeSize}-${runtime.config.displayDepth}-${unitRevision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
@@ -281,6 +281,7 @@ function publicConfig(config: BathymetryConfig): Record<string, unknown> {
     qcBaseChart: config.qcBaseChart,
     showDepthLabels: config.showDepthLabels,
     depthLabelRelativeSize: config.depthLabelRelativeSize,
+    displayDepth: config.displayDepth,
     minZoom: config.minZoom,
     maxZoom: config.maxZoom,
     autoBackfillWhenEmpty: config.autoBackfillWhenEmpty,
