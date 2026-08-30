@@ -12,7 +12,7 @@ import {
   ProjectionUnavailableError,
   type DepthMode
 } from './tiles'
-import type { BathymetryConfig, SurfaceCell, TideProjection } from './types'
+import type { BathymetryConfig, DepthDisplayMode, SurfaceCell, TideProjection } from './types'
 
 const MVT_EXTENT = 4096
 export const BATHYMETRY_MVT_LAYER = 'DEPARE'
@@ -45,6 +45,9 @@ export class VectorTileRenderer {
     mode: DepthMode
     atMs: number
     cellSizeScale?: number
+    // Per-request override of the configured primary depth estimate. Absent means the
+    // configuration decides.
+    displayDepth?: DepthDisplayMode
   }): RenderedVectorTile {
     const cellMeters = overviewCellMeters(
       this.config.baseCellMeters,
@@ -93,6 +96,7 @@ export class VectorTileRenderer {
       options.mode,
       projection
     )
+    const displayDepth = options.displayDepth ?? this.config.displayDepth
     const features = cells.map((cell) =>
       cellFeature(
         cell,
@@ -101,7 +105,8 @@ export class VectorTileRenderer {
         options.mode,
         projection,
         this.config,
-        this.getDepthUnits()
+        this.getDepthUnits(),
+        displayDepth
       )
     )
     const result: RenderedVectorTile = {
@@ -127,17 +132,18 @@ function cellFeature(
   mode: DepthMode,
   projection: TideProjection | undefined,
   config: BathymetryConfig,
-  units: DepthDisplayUnits
+  units: DepthDisplayUnits,
+  displayDepth: DepthDisplayMode
 ): VectorFeature {
   const combinedSigmaM = projection
     ? Math.sqrt(cell.verticalSigmaM ** 2 + projection.sigmaM ** 2)
     : cell.verticalSigmaM
-  // The chart's primary depth follows the configured display estimate. The
-  // conservative default keeps the shallow-biased 95 percent lower bound; the
-  // predicted option shows the best estimate without the safety margin. The
-  // conservative and robust depths always travel as their own properties so
-  // consumers can still read both.
-  const displayPredicted = config.displayDepth === 'predicted'
+  // The chart's primary depth follows the effective display estimate (a per-request choice
+  // overrides the configured one). The conservative default keeps the shallow-biased 95 percent
+  // lower bound; the predicted option shows the best estimate without the safety margin. The
+  // conservative and robust depths always travel as their own properties so consumers can still
+  // read both.
+  const displayPredicted = displayDepth === 'predicted'
   const depthM = projection
     ? cell.renderDepthM +
       projection.heightM -

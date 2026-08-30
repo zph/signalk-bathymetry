@@ -11,7 +11,7 @@ import {
 import type { CaptureEngine } from './capture'
 import type { HistoryBackfill } from './history-backfill'
 import type { AutoBackfill } from './auto-backfill'
-import type { BathymetryConfig, QcState, SurfaceCell } from './types'
+import type { BathymetryConfig, DepthDisplayMode, QcState, SurfaceCell } from './types'
 import type { DepthUnitPreferences } from './depth-units'
 import { vectorStyle } from './vector-style'
 import {
@@ -174,12 +174,24 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
       const unitRevision = runtime.depthUnits.status().revision
-      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelRelativeSize}-${runtime.config.displayDepth}-${unitRevision}\"`
+      const displayDepth = requestedDisplayDepth(
+        stringQuery(request, 'displayDepth'),
+        runtime.config.displayDepth
+      )
+      const etag = `W/\"${BATHYMETRY_MVT_REVISION}-${runtime.store.revision()}-${z}-${x}-${y}-${mode}-${tideBucket}-${cellSizeScale}-${Number(runtime.config.showDepthLabels)}-${runtime.config.depthLabelRelativeSize}-${displayDepth}-${unitRevision}\"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
       }
-      const rendered = runtime.vectorRenderer.render({ z, x, y, mode, atMs, cellSizeScale })
+      const rendered = runtime.vectorRenderer.render({
+        z,
+        x,
+        y,
+        mode,
+        atMs,
+        cellSizeScale,
+        displayDepth
+      })
       response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
       response.set(
         'Cache-Control',
@@ -378,6 +390,17 @@ function integerParam(
 function optionalBbox(request: Request): [number, number, number, number] | undefined {
   const raw = stringQuery(request, 'bbox')
   return raw ? parseBbox(raw) : undefined
+}
+
+// The tiles endpoint honors a per-request display-depth choice so a chartplotter can flip between
+// the conservative bound and the best estimate without changing plugin configuration. Anything
+// other than an exact, known value falls back to the configured default, keeping the conservative
+// safety bias.
+function requestedDisplayDepth(
+  raw: string | undefined,
+  configured: DepthDisplayMode
+): DepthDisplayMode {
+  return raw === 'conservative' || raw === 'predicted' ? raw : configured
 }
 
 function requiredBbox(request: Request): [number, number, number, number] {

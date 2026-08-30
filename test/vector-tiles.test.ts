@@ -287,6 +287,54 @@ test('overview aggregation reports coverage without capping member confidence', 
   }
 })
 
+test('a per-request display-depth choice overrides the configured estimate', (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-override-test-'))
+  // The plugin is configured for the conservative safety bias; a chartplotter may still ask a
+  // single request for the best estimate, and the reverse.
+  const config = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
+  t.after(() => {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const input = sounding(config, {
+    datumDepthM: 6.25,
+    rawDepthM: 5.75,
+    verticalSigmaM: 0.4,
+    sampleCount: 12,
+    aggregationKind: 'stationary_window'
+  })
+  store.ingest([input])
+  const renderer = new VectorTileRenderer(store, config, () => undefined)
+  const z = 20
+  const tile = tileForPosition(input.longitude, input.latitude, z)
+  const renderOptions = { z, ...tile, mode: 'datum' as const, atMs: input.observedAtMs }
+
+  const predicted = decodeTile(renderer.render({ ...renderOptions, displayDepth: 'predicted' }).tile)
+    .features.find((feature) => feature.properties.BATHY_CELL_X !== undefined)
+  assert.ok(predicted)
+  assert.equal(predicted.properties.BATHY_DISPLAY_KIND, 'predicted')
+  assert.equal(predicted.properties.BATHY_DEPTH_M, predicted.properties.BATHY_RENDER_DEPTH_M)
+  assert.equal(predicted.properties.DRVAL1, predicted.properties.BATHY_DEPTH_M)
+
+  const conservative = decodeTile(
+    renderer.render({ ...renderOptions, displayDepth: 'conservative' }).tile
+  ).features.find((feature) => feature.properties.BATHY_CELL_X !== undefined)
+  assert.ok(conservative)
+  assert.equal(conservative.properties.BATHY_DISPLAY_KIND, 'conservative')
+  assert.equal(
+    conservative.properties.BATHY_DEPTH_M,
+    conservative.properties.BATHY_CONSERVATIVE_DEPTH_M
+  )
+
+  // Absent the option the configured default still decides: conservative here.
+  const configured = decodeTile(renderer.render(renderOptions).tile).features.find(
+    (feature) => feature.properties.BATHY_CELL_X !== undefined
+  )
+  assert.ok(configured)
+  assert.equal(configured.properties.BATHY_DISPLAY_KIND, 'conservative')
+})
+
 function tileForPosition(longitude: number, latitude: number, z: number): { x: number; y: number } {
   const count = 2 ** z
   const latitudeRad = (latitude * Math.PI) / 180
