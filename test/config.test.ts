@@ -51,15 +51,15 @@ test('depth label relative size is configurable within safe portrayal bounds', (
   })
 })
 
-test('display depth defaults to conservative and only accepts the two modes', () => {
-  assert.equal(normalizeConfig({}).displayDepth, 'conservative')
+test('display depth defaults to predicted and only accepts the two modes', () => {
+  assert.equal(normalizeConfig({}).displayDepth, 'predicted')
   assert.equal(normalizeConfig({ displayDepth: 'predicted' }).displayDepth, 'predicted')
-  // Anything else falls back to the safe default rather than throwing.
-  assert.equal(normalizeConfig({ displayDepth: 'robust' }).displayDepth, 'conservative')
-  assert.equal(normalizeConfig({ displayDepth: 42 }).displayDepth, 'conservative')
+  // Anything else falls back to the configured default rather than throwing.
+  assert.equal(normalizeConfig({ displayDepth: 'robust' }).displayDepth, 'predicted')
+  assert.equal(normalizeConfig({ displayDepth: 42 }).displayDepth, 'predicted')
 
   const properties = (pluginSchema() as { properties: Record<string, Record<string, unknown>> })
     .properties
-  assert.equal(properties.displayDepth?.default, 'conservative')
+  assert.equal(properties.displayDepth?.default, 'predicted')
   assert.deepEqual(properties.displayDepth?.enum, ['conservative', 'predicted'])
 })

@@ -2,10 +2,10 @@ import { hexCellCenter, hexCellForMercator } from './geo'
 import type { SurfaceCell, TideProjection } from './types'
 
 const OVERVIEW_MAX_CELL_METERS = 640
-export const CELL_SIZE_SCALE_MIN = 0.5
-export const CELL_SIZE_SCALE_MAX = 4
+export const CELL_SIZE_SCALE_MIN = 0.25
+export const CELL_SIZE_SCALE_MAX = 0.75
 export const CELL_SIZE_SCALE_STEP = 0.25
-export const CELL_SIZE_SCALE_DEFAULT = 1
+export const CELL_SIZE_SCALE_DEFAULT = 0.5
 
 export type DepthMode = 'datum' | 'water'
 

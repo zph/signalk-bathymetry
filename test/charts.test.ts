@@ -33,9 +33,15 @@ test('chart provider advertises one styled datum MVT chart', async (t) => {
   assert.equal(resource.defaultVisible, true)
   assert.deepEqual(resource.cellSizeControl, {
     queryParameter: 'cellScale',
-    minimum: 0.5,
-    maximum: 4,
+    minimum: 0.25,
+    maximum: 0.75,
     step: 0.25,
-    default: 1
+    default: 0.5
   })
+  const scale = resource.cellSizeControl as {
+    minimum: number
+    maximum: number
+    default: number
+  }
+  assert.equal((scale.minimum + scale.maximum) / 2, scale.default)
 })

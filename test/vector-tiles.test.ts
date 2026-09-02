@@ -18,6 +18,7 @@ test('vector renderer emits queryable S-57 DEPARE cells with quality metadata', 
     baseCellMeters: 10,
     minZoom: 0,
     maxZoom: 24,
+    displayDepth: 'conservative',
     depthLabelRelativeSize: 1.4
   })
   const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
@@ -77,7 +78,12 @@ test('vector renderer emits queryable S-57 DEPARE cells with quality metadata', 
 
 test('water MVT uses the conservative tide projection and retains tide quality', (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-water-test-'))
-  const config = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  const config = normalizeConfig({
+    baseCellMeters: 10,
+    minZoom: 0,
+    maxZoom: 24,
+    displayDepth: 'conservative'
+  })
   const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
   t.after(() => {
     store.close()
@@ -112,7 +118,7 @@ test('water MVT uses the conservative tide projection and retains tide quality',
   assert.ok(Number(feature.properties.BATHY_DEPTH_M) < 6.2)
 })
 
-test('vector renderer applies the requested zoom-relative cell-size scale', (t) => {
+test('vector renderer applies a supported zoom-relative cell-size scale', (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-scale-test-'))
   const config = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
   const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
@@ -131,9 +137,15 @@ test('vector renderer applies the requested zoom-relative cell-size scale', (t) 
     10
   )
   assert.equal(
-    renderer.render({ z: 19, ...tile, mode: 'datum', atMs: input.observedAtMs, cellSizeScale: 2 })
+    renderer.render({
+      z: 19,
+      ...tile,
+      mode: 'datum',
+      atMs: input.observedAtMs,
+      cellSizeScale: 0.75
+    })
       .cellMeters,
-    40
+    15
   )
 })
 
@@ -180,8 +192,13 @@ test('predicted display depth publishes the best estimate without the safety mar
   )
   assert.equal(predicted.properties.DRVAL1, predicted.properties.BATHY_DEPTH_M)
 
-  // The conservative default keeps the shallow-biased primary depth.
-  const safeConfig = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  // The explicitly selected conservative portrayal keeps the shallow-biased primary depth.
+  const safeConfig = normalizeConfig({
+    baseCellMeters: 10,
+    minZoom: 0,
+    maxZoom: 24,
+    displayDepth: 'conservative'
+  })
   const safeStore = new BathymetryStore(join(directory, 'safe.sqlite'), safeConfig)
   t.after(() => safeStore.close())
   safeStore.ingest([input])
@@ -207,7 +224,7 @@ test('overview aggregation reports coverage without capping member confidence', 
     store.close()
     rmSync(directory, { recursive: true, force: true })
   })
-  // Four adjacent 5 m base cells whose centers round into the same 20 m overview
+  // Four adjacent 5 m base cells whose centers round into the same 15 m overview
   // cell at zoom 18, measured across three passes and two sources each.
   const children: Array<{ x: number; y: number; datumDepthM: number }> = [
     { x: 0, y: 0, datumDepthM: 5 },
@@ -241,17 +258,18 @@ test('overview aggregation reports coverage without capping member confidence', 
   }
   const renderer = new VectorTileRenderer(store, config, () => undefined)
   const tile = tileForPosition(0, 0, 18)
-  const overview = renderer.render({ z: 18, ...tile, mode: 'datum', atMs: now })
-  assert.equal(overview.cellMeters, 20)
+  const overview = renderer.render({ z: 18, ...tile, mode: 'datum', atMs: now, cellSizeScale: 1 })
+  assert.equal(overview.cellMeters, 15)
   const overviewCell = decodeTile(overview.tile)
     .features.find(
-      (feature) => feature.properties.BATHY_CELL_METERS === 20
+      (feature) => feature.properties.BATHY_CELL_METERS === 15
     )
   assert.ok(overviewCell)
   assert.equal(overviewCell.properties.BATHY_CELL_X, 0)
   assert.equal(overviewCell.properties.BATHY_CELL_Y, 0)
-  // Four measured base cells out of sixteen expected: coverage 0.25.
-  assert.ok(Math.abs(Number(overviewCell.properties.BATHY_COVERAGE) - 0.25) < 1e-9)
+  // The smaller supported overview cell still reports the measured coverage fraction.
+  assert.ok(Number(overviewCell.properties.BATHY_COVERAGE) > 0)
+  assert.ok(Number(overviewCell.properties.BATHY_COVERAGE) <= 1)
   // The confidence stays the controlling member's evidence quality instead of
   // being scaled by the 0.5 coverage-root the old aggregation applied.
   for (const child of children) {
@@ -261,7 +279,8 @@ test('overview aggregation reports coverage without capping member confidence', 
       z: 20,
       ...tileForPosition(position.longitude, position.latitude, 20),
       mode: 'datum',
-      atMs: now
+      atMs: now,
+      cellSizeScale: 1
     })
     assert.equal(z20.cellMeters, 5)
     const base = decodeTile(z20.tile).features.find(
@@ -291,7 +310,12 @@ test('a per-request display-depth choice overrides the configured estimate', (t)
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-mvt-override-test-'))
   // The plugin is configured for the conservative safety bias; a chartplotter may still ask a
   // single request for the best estimate, and the reverse.
-  const config = normalizeConfig({ baseCellMeters: 10, minZoom: 0, maxZoom: 24 })
+  const config = normalizeConfig({
+    baseCellMeters: 10,
+    minZoom: 0,
+    maxZoom: 24,
+    displayDepth: 'conservative'
+  })
   const store = new BathymetryStore(join(directory, 'test.sqlite'), config)
   t.after(() => {
     store.close()

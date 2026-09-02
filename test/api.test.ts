@@ -95,7 +95,7 @@ function fakeRuntime(displayDepth: 'conservative' | 'predicted'): Runtime {
 }
 
 test('tiles without a displayDepth parameter render the configured estimate and etag', () => {
-  const runtime = fakeRuntime('conservative')
+  const runtime = fakeRuntime('predicted')
   const handler = tileHandler(runtime)
   const { response, headers } = fakeResponse()
 
@@ -104,8 +104,8 @@ test('tiles without a displayDepth parameter render the configured estimate and 
   const calls = (runtime as unknown as { renderCalls: Array<{ displayDepth?: string }> })
     .renderCalls
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.displayDepth, 'conservative')
-  assert.match(headers.get('ETag') ?? '', /conservative/)
+  assert.equal(calls[0]?.displayDepth, 'predicted')
+  assert.match(headers.get('ETag') ?? '', /predicted/)
 })
 
 test('a displayDepth query parameter overrides the configured estimate', () => {
