@@ -9,6 +9,9 @@ interactive vector cells to Signal K chartplotters.
 
 The full design and safety model are in
 [docs/BATHYMETRY_SPEC.md](docs/BATHYMETRY_SPEC.md).
+The proposed multi-vessel contribution, validation, storage, and reciprocal
+sharing design is in
+[docs/SHARED_BATHYMETRY_SPEC.md](docs/SHARED_BATHYMETRY_SPEC.md).
 
 ## Implemented MVP
 
