@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import {
   csbCsvUrl,
+  fetchCsbCsv,
   discoverFiles,
   NoaaCsbStore,
   parseCsbCsv,
@@ -18,6 +19,17 @@ const metadata: CsbFileMetadata = {
   provider: 'Signal K',
   instrument: 'Airmar DST810'
 }
+
+test('falls back to legacy NOAA pointData CSV only on a missing modern key', async () => {
+  const urls: string[] = []
+  const fetcher: typeof fetch = async (url) => {
+    urls.push(String(url))
+    return new Response('data', { status: urls.length === 1 ? 404 : 200 })
+  }
+  const response = await fetchCsbCsv(fetcher, metadata.name, new AbortController().signal)
+  assert.equal(response.status, 200)
+  assert.equal(urls[1], csbCsvUrl(metadata.name).replace(/\.csv$/, '_pointData.csv'))
+})
 
 test('maps NOAA archive names to the public sounding CSV', () => {
   assert.equal(

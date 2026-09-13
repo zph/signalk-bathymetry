@@ -381,9 +381,7 @@ export class NoaaCsbImporter {
             continue
           }
           try {
-            const response = await this.fetcher(csbCsvUrl(metadata.name), {
-              signal
-            })
+            const response = await fetchCsbCsv(this.fetcher, metadata.name, signal)
             if (!response.ok) throw new Error(`NOAA archive returned HTTP ${response.status}`)
             const parsed = parseCsbCsv(await response.text(), bbox, metadata)
             const result = this.store.ingestFile(metadata, parsed.soundings, parsed.invalid)
@@ -464,6 +462,19 @@ export async function discoverFiles(
     if (!body.exceededTransferLimit || features.length === 0) break
   }
   return [...files.values()]
+}
+
+export async function fetchCsbCsv(
+  fetcher: typeof fetch,
+  name: string,
+  signal: AbortSignal
+): Promise<Response> {
+  const url = csbCsvUrl(name)
+  const response = await fetcher(url, { signal })
+  if (response.status !== 404) return response
+  await response.body?.cancel()
+  // Legacy submissions use this suffix in the same public archive.
+  return fetcher(url.replace(/\.csv$/, '_pointData.csv'), { signal })
 }
 
 export function csbCsvUrl(name: string): string {

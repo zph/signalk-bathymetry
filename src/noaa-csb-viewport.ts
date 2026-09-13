@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { csbCsvUrl, discoverFiles, parseCsbCsv, type Bbox, type NoaaCsbStore } from './noaa-csb'
+import { fetchCsbCsv, discoverFiles, parseCsbCsv, type Bbox, type NoaaCsbStore } from './noaa-csb'
 import { mercatorToLonLat, tileMercatorBounds } from './geo'
 
 const DAY = 86_400_000
@@ -84,7 +84,7 @@ export class NoaaCsbViewport {
         const files = await discoverFiles(this.fetcher, bbox, MAX_FILES + 1, this.signal())
         for (const file of files.slice(0, MAX_FILES)) {
           if (this.store.hasFullFile(file.name)) continue
-          const response = await this.fetcher(csbCsvUrl(file.name), { signal: this.signal() })
+          const response = await fetchCsbCsv(this.fetcher, file.name, this.signal())
           if (!response.ok) throw new Error(`NOAA archive returned HTTP ${response.status}`)
           // Keep complete files, not viewport-clipped fragments masquerading as a full cache hit.
           const parsed = parseCsbCsv(await limitedText(response), [-180, -90, 180, 90], file)
