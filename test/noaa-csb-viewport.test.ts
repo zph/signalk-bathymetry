@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { NoaaCsbStore } from '../src/noaa-csb'
@@ -107,5 +107,28 @@ test('upstream failures stay failures, not cached empty coverage', async (t) => 
   await assert.rejects(service.coverage(0, 0, 0), /PNG/)
   await assert.rejects(service.coverage(0, 0, 0), /PNG/)
   assert.equal(calls, 2)
+  service.stop()
+})
+
+test('a pre-revision coverage tile remains an outage-only fallback', async (t) => {
+  const dir = mkdtempSync(join(process.cwd(), '.csb-legacy-coverage-'))
+  const store = new NoaaCsbStore(join(dir, 'store.sqlite'))
+  t.after(() => {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  writeFileSync(
+    join(dir, '12-656-1582.json'),
+    JSON.stringify({ at: Date.now(), image: png.toString('base64') })
+  )
+  let calls = 0
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return new Response('upstream unavailable', { status: 500 })
+  }
+  const service = new NoaaCsbViewport(store, dir, fetcher)
+  assert.deepEqual(await service.coverage(12, 656, 1582), png)
+  assert.equal(calls, 1)
   service.stop()
 })

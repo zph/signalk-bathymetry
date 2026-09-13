@@ -135,11 +135,18 @@ export class NoaaCsbViewport {
 
   private async loadCoverage(key: string, z: number, x: number, y: number): Promise<Buffer> {
     const path = join(this.cacheDir, `${NOAA_CSB_COVERAGE_STYLE_REVISION}-${key}.json`)
+    const legacyPath = join(this.cacheDir, `${key}.json`)
     let cached: { at: number; image: string } | undefined
+    let legacyCached: typeof cached
     try {
       cached = JSON.parse(await readFile(path, 'utf8')) as typeof cached
     } catch {
       /* first request */
+    }
+    try {
+      legacyCached = JSON.parse(await readFile(legacyPath, 'utf8')) as typeof cached
+    } catch {
+      /* no pre-revision fallback */
     }
     if (cached && Date.now() - cached.at < DAY) return Buffer.from(cached.image, 'base64')
     try {
@@ -153,7 +160,8 @@ export class NoaaCsbViewport {
       await writeFile(path, JSON.stringify({ at: Date.now(), image: image.toString('base64') }))
       return image
     } catch (error) {
-      if (cached) return Buffer.from(cached.image, 'base64')
+      const fallback = cached ?? legacyCached
+      if (fallback) return Buffer.from(fallback.image, 'base64')
       throw error
     }
   }
