@@ -58,7 +58,7 @@ export function createChartProvider(
 }
 
 function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown> {
-  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf'
+  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=cached-depths-v2'
   return {
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',

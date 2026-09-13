@@ -9,7 +9,25 @@ import { registerRoutes } from '../src/api'
 
 type Handler = (request: Request, response: Response) => unknown
 
-function tileHandler(runtime: Runtime): Handler {
+test('cached NOAA depths remain available during discovery outages', async () => {
+  for (const count of [0, 12]) {
+    const runtime = {
+      csbViewport: { ensure: async () => { throw new Error('NOAA unavailable') } },
+      csbStore: { revision: () => 1 },
+      csbRenderer: { render: () => ({ tile: EMPTY_BATHYMETRY_MVT, soundingCount: count, pointCount: count, cellMeters: 5 }) }
+    } as unknown as Runtime
+    const result = fakeResponse()
+    await tileHandler(runtime, '/csb/tiles/:z/:x/:y.pbf')(fakeRequest({}), result.response)
+    assert.equal(result.status(), count ? 200 : 503)
+    if (count) {
+      assert.equal(result.headers.get('X-CSB-Data-Status'), 'cached-discovery-unavailable')
+      assert.equal(result.headers.get('Cache-Control'), 'private, max-age=60')
+      assert.ok(result.body())
+    }
+  }
+})
+
+function tileHandler(runtime: Runtime, route = '/tiles/:z/:x/:y.pbf'): Handler {
   const routes = new Map<string, Handler>()
   const accessRouter = {
     get: (path: string, handler: Handler) => {
@@ -28,7 +46,7 @@ function tileHandler(runtime: Runtime): Handler {
   }
   const adminRoutes = new Set<string>()
   registerRoutes(adminRouter as unknown as PluginRouter, () => runtime)
-  const handler = routes.get('/tiles/:z/:x/:y.pbf')
+  const handler = routes.get(route)
   assert.ok(handler)
   return handler
 }

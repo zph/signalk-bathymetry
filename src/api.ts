@@ -217,7 +217,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
     try {
-      const z = integerParam(request, 'z', 0, 18)
+      const z = integerParam(request, 'z', 0, 24)
       const x = integerParam(request, 'x', 0, 2 ** z - 1)
       const y = integerParam(request, 'y', 0, 2 ** z - 1, '.png')
       const image = await runtime.csbViewport.coverage(z, x, y)
@@ -237,15 +237,27 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const maxCoordinate = 2 ** z - 1
       const x = integerParam(request, 'x', 0, maxCoordinate)
       const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
-      await runtime.csbViewport.ensure(z, x, y)
+      let downloadFailed = false
+      try {
+        await runtime.csbViewport.ensure(z, x, y)
+      } catch {
+        // Discovery failures must not hide observations already retained locally.
+        // The viewport status retains the upstream error for diagnosis.
+        downloadFailed = true
+      }
       const etag = `W/"${NOAA_CSB_MVT_REVISION}-${runtime.csbStore.revision()}-${z}-${x}-${y}"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
       }
       const rendered = runtime.csbRenderer.render(z, x, y)
+      if (downloadFailed && rendered.soundingCount === 0) {
+        response.status(503).json({ error: 'NOAA discovery unavailable and no cached depths in this tile' })
+        return
+      }
       response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
-      response.set('Cache-Control', 'private, max-age=86400')
+      response.set('Cache-Control', downloadFailed ? 'private, max-age=60' : 'private, max-age=86400')
+      response.set('X-CSB-Data-Status', downloadFailed ? 'cached-discovery-unavailable' : 'current')
       response.set('ETag', etag)
       response.set('X-CSB-Sounding-Count', String(rendered.soundingCount))
       response.set('X-CSB-Point-Count', String(rendered.pointCount))
