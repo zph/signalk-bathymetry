@@ -11,6 +11,17 @@ import {
   type CsbFileMetadata
 } from '../src/noaa-csb'
 import { NoaaCsbTileRenderer } from '../src/noaa-csb-tiles'
+import { encodeSoundingPointTile } from '../src/vector-tiles'
+
+test('dense sounding tiles do not exceed the JavaScript argument stack', () => {
+  const tile = encodeSoundingPointTile(
+    Array.from({ length: 12000 }, (_, i) => ({
+      point: { x: i % 4096, y: Math.floor(i / 4096) },
+      properties: { DEPTH: i / 10, PLATFORM: 'test vessel', OBSERVED_AT: 1700000000000 + i }
+    }))
+  )
+  assert.ok(tile.length > 125000)
+})
 
 const metadata: CsbFileMetadata = {
   name: '20260719211820949694_45401716-01ab-4c46-ac8e-432c6b1e44ea.tar.gz',

@@ -351,7 +351,8 @@ class ProtoWriter {
   bytesField(field: number, value: Uint8Array): void {
     this.uint((field << 3) | 2)
     this.uint(value.length)
-    this.bytes.push(...value)
+    // Dense survey tiles can exceed V8's argument-count limit.
+    for (const byte of value) this.bytes.push(byte)
   }
 
   packedUIntField(field: number, values: readonly number[]): void {
