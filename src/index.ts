@@ -11,6 +11,7 @@ import { DepthUnitPreferences } from './depth-units'
 import { VectorTileRenderer } from './vector-tiles'
 import { NoaaCsbImporter, NoaaCsbStore } from './noaa-csb'
 import { NoaaCsbTileRenderer } from './noaa-csb-tiles'
+import { NoaaCsbViewport } from './noaa-csb-viewport'
 
 const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
   let runtime: Runtime | undefined
@@ -53,6 +54,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           vectorRenderer,
           csbStore,
           csbImporter,
+          csbViewport: new NoaaCsbViewport(csbStore, join(dataDirectory, 'csb-coverage')),
           csbRenderer
         }
         app.registerResourceProvider(createChartProvider(store, config, csbStore))
@@ -86,6 +88,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
 }
 
 function stopRuntime(runtime: Runtime): void {
+  runtime.csbViewport.stop()
   runtime.csbImporter.stop()
   runtime.depthUnits.stop()
   runtime.autoBackfill.stop()

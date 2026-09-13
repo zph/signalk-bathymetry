@@ -28,7 +28,24 @@ export function createChartProvider(
         true
       )
     }
-    if (csbStore) result[NOAA_CSB_VECTOR_ID] = noaaCsbChartResource(csbStore, config)
+    if (csbStore) {
+      result[NOAA_CSB_VECTOR_ID] = noaaCsbChartResource(config)
+      result['signalk-bathymetry-noaa-csb-coverage'] = {
+        identifier: 'signalk-bathymetry-noaa-csb-coverage',
+        name: 'NOAA Crowdsourced Coverage and Tracks',
+        description:
+          'Red haze marks NOAA indexed survey tracks worldwide, not depth or navigable water. Zoom in and enable NOAA Crowdsourced Depth Soundings to download observations for the visible area.',
+        type: 'tilelayer',
+        format: 'png',
+        chartFormat: 'png',
+        minzoom: 0,
+        maxzoom: 18,
+        bounds: [-180, -85.051129, 180, 85.051129],
+        tilemapUrl: '/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png',
+        defaultOpacity: 0.65,
+        defaultVisible: false
+      }
+    }
     return result
   }
   return {
@@ -37,7 +54,8 @@ export function createChartProvider(
       listResources: async () => resources(),
       getResource: async (id, property) => {
         const resource = resources()[id]
-        if (!resource || typeof resource !== 'object') throw new Error(`Unknown chart resource: ${id}`)
+        if (!resource || typeof resource !== 'object')
+          throw new Error(`Unknown chart resource: ${id}`)
         if (!property) return resource
         const value = readProperty(resource as Record<string, unknown>, property)
         if (value === undefined) throw new Error(`Unknown chart property: ${property}`)
@@ -53,22 +71,19 @@ export function createChartProvider(
   }
 }
 
-function noaaCsbChartResource(
-  store: NoaaCsbStore,
-  config: BathymetryConfig
-): Record<string, unknown> {
+function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown> {
   const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf'
   return {
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Depth Soundings',
     description:
-      'Cached raw observed depths from NOAA Crowdsourced Bathymetry. Vertical datum and vessel offsets are unknown. Supplemental reference only, not for navigation.',
+      'Downloads and caches NOAA observations in the visible area at zoom 12 and closer. Enable NOAA Crowdsourced Coverage and Tracks to find available areas. Unknown vertical datum and vessel offsets; not for navigation.',
     type: 'S-57',
     format: 'pbf',
     chartFormat: 'pbf',
-    minzoom: config.minZoom,
+    minzoom: 12,
     maxzoom: config.maxZoom,
-    bounds: expandedBounds(store.stats().bounds),
+    bounds: [-180, -85.051129, 180, 85.051129],
     url: tileUrl,
     tilemapUrl: tileUrl,
     layers: ['SOUNDG'],

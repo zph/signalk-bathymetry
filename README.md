@@ -140,6 +140,35 @@ vertical datum and vessel offsets. They remain visually and structurally
 separate from the plugin's tide-reduced local surface and are supplemental
 reference data only, not navigation data.
 
+Open **Explore NOAA vessel journeys and individual depths** on the plugin home
+page, or open `journeys.html` directly. Filter by vessel, provider, instrument,
+and collection dates, select a source-file journey segment, and inspect exact
+observed depths on the map or in the paginated measurement table. Tracks retain
+visible strokes and endpoint dots at low zoom. Gaps longer than five minutes,
+implausible jumps, and antimeridian crossings break the drawn line.
+
+`GET /csb/journeys` lists cached vessel/segment metadata. `GET /csb/journey`
+accepts `vessel`, `journey`, and an optional `after` cursor and returns up to
+5,000 original observations with a `next` cursor. These endpoints require the
+same read access as the depth layer. The explorer reads cached data only.
+
+Enable **NOAA Crowdsourced Coverage and Tracks** in Binnacle's chart list for
+worldwide translucent red coverage, including at world zoom. The footprint is
+NOAA's indexed track coverage, not depth, a safety boundary, or proof that every
+record contains a valid sounding. Rendering uses NOAA's map export rather than a
+record-limited feature query. PNG tiles use the ordinary chart tile cache plus a
+one-day server disk cache, with cached fallback during upstream outages.
+
+Enable **NOAA Crowdsourced Depth Soundings** to automatically download observations
+when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by
+zoom-12 area, serialized, and retained in SQLite across restarts. Full source files
+are retained so panning elsewhere on the same vessel journey does not lose data.
+Older viewport-clipped cache entries are downloaded again on demand. Automatic
+imports are bounded to 50 files per area and 64 MB per file; use the manual importer
+for denser areas. `/csb/status` reports pending viewport areas and download errors.
+Zoomed-out coverage never triggers bulk depth downloads. Neither layer is enabled
+automatically merely by installing the plugin.
+
 ## Storage decision
 
 SQLite is the operational store and is sufficient for the MVP. Integer-scaled

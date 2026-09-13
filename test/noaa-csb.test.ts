@@ -92,6 +92,13 @@ test('stores cached observations separately and renders sounding-only vector til
   })
   assert.equal(store.stats().soundings, 2)
   assert.equal(store.listSoundings([-179, -23.7, -178.86, -23.58]).length, 2)
+  // Identity and cursor lookup preserve every original depth without cross-vessel mixing.
+  assert.equal(store.journeys().length, 2)
+  const first = store.journeyPoints('one', 'file-a', 0, 1)
+  assert.equal(first[0]?.depthM, 15.63)
+  assert.equal(store.journeyPoints('two', 'file-a')[0]?.depthM, 16.1)
+  assert.deepEqual(store.journeyPoints('one', 'file-a', Number(first[0]?.id)), [])
+  assert.deepEqual(store.journeyPoints('missing', 'file-a'), [])
 
   const z = 14
   const tile = tileForPosition(-178.91, -23.65, z)
@@ -105,8 +112,6 @@ function tileForPosition(longitude: number, latitude: number, z: number): { x: n
   const count = 2 ** z
   const x = Math.floor(((longitude + 180) / 360) * count)
   const latitudeRadians = (latitude * Math.PI) / 180
-  const y = Math.floor(
-    ((1 - Math.asinh(Math.tan(latitudeRadians)) / Math.PI) / 2) * count
-  )
+  const y = Math.floor(((1 - Math.asinh(Math.tan(latitudeRadians)) / Math.PI) / 2) * count)
   return { x, y }
 }

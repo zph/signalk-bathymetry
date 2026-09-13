@@ -21,6 +21,7 @@ import {
 } from './vector-tiles'
 import type { NoaaCsbImporter, NoaaCsbStore } from './noaa-csb'
 import { NOAA_CSB_MVT_REVISION, type NoaaCsbTileRenderer } from './noaa-csb-tiles'
+import type { NoaaCsbViewport } from './noaa-csb-viewport'
 
 const DEPTH_MODES = new Set<DepthMode>(['datum', 'water'])
 const CURRENT_TILE_CACHE_SECONDS = 600
@@ -36,6 +37,7 @@ export interface Runtime {
   csbStore: NoaaCsbStore
   csbImporter: NoaaCsbImporter
   csbRenderer: NoaaCsbTileRenderer
+  csbViewport: NoaaCsbViewport
 }
 
 export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime | undefined): void {
@@ -122,7 +124,9 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
         runtime.config.targetDatum,
         integerQuery(request, 'limit', 1000, 1, 10_000)
       )
-      response.json({ cells: cells.map((cell) => cellResponse(runtime.store, cell)) })
+      response.json({
+        cells: cells.map((cell) => cellResponse(runtime.store, cell))
+      })
     } catch (error) {
       sendError(response, error)
     }
@@ -165,8 +169,32 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       warning:
         'Raw crowdsourced observations with unknown vertical datum and vessel offsets; not for navigation.',
       import: runtime.csbImporter.status(),
+      viewport: runtime.csbViewport.status(),
       store: runtime.csbStore.stats()
     })
+  })
+
+  read.get('/csb/journeys', (_request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    response.json({ journeys: runtime.csbStore.journeys() })
+  })
+
+  read.get('/csb/journey', (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const vessel = stringQuery(request, 'vessel')
+      const journey = stringQuery(request, 'journey')
+      if (!vessel || !journey) throw new HttpError(400, 'vessel and journey are required')
+      const after = integerQuery(request, 'after', 0, 0, Number.MAX_SAFE_INTEGER)
+      const points = runtime.csbStore.journeyPoints(vessel, journey, after, 5001)
+      const more = points.length > 5000
+      if (more) points.pop()
+      response.json({ points, next: more ? points.at(-1)?.id : null })
+    } catch (error) {
+      sendError(response, error)
+    }
   })
 
   read.get('/csb/soundings', (request, response) => {
@@ -185,7 +213,23 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
-  read.get('/csb/tiles/:z/:x/:y.pbf', (request, response) => {
+  read.get('/csb/coverage/:z/:x/:y.png', async (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 0, 18)
+      const x = integerParam(request, 'x', 0, 2 ** z - 1)
+      const y = integerParam(request, 'y', 0, 2 ** z - 1, '.png')
+      const image = await runtime.csbViewport.coverage(z, x, y)
+      response.set('Content-Type', 'image/png')
+      response.set('Cache-Control', 'private, max-age=86400')
+      response.send(image)
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
+  read.get('/csb/tiles/:z/:x/:y.pbf', async (request, response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
     try {
@@ -193,6 +237,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const maxCoordinate = 2 ** z - 1
       const x = integerParam(request, 'x', 0, maxCoordinate)
       const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
+      await runtime.csbViewport.ensure(z, x, y)
       const etag = `W/"${NOAA_CSB_MVT_REVISION}-${runtime.csbStore.revision()}-${z}-${x}-${y}"`
       if (request.headers['if-none-match'] === etag) {
         response.status(304).end()
@@ -223,12 +268,8 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       if (!DEPTH_MODES.has(mode)) throw new HttpError(400, 'mode must be datum or water')
       const atMs = optionalTime(request, 'at') ?? Date.now()
       const cellSizeScale =
-        optionalNumberQuery(
-          request,
-          'cellScale',
-          CELL_SIZE_SCALE_MIN,
-          CELL_SIZE_SCALE_MAX
-        ) ?? CELL_SIZE_SCALE_DEFAULT
+        optionalNumberQuery(request, 'cellScale', CELL_SIZE_SCALE_MIN, CELL_SIZE_SCALE_MAX) ??
+        CELL_SIZE_SCALE_DEFAULT
       const tideBucket =
         mode === 'water' ? Math.floor(atMs / (CURRENT_TILE_CACHE_SECONDS * 1000)) : 0
       const unitRevision = runtime.depthUnits.status().revision
@@ -321,21 +362,50 @@ export function openApi(): object {
     info: { title: 'Signal K Local Bathymetry API', version: '0.5.0' },
     paths: {
       '/status': { get: operation('Plugin, capture, and storage status') },
-      '/soundings': { get: operation('Query provenance-rich raw soundings and QC states') },
+      '/soundings': {
+        get: operation('Query provenance-rich raw soundings and QC states')
+      },
       '/cells': { get: operation('Query rendered bathymetry cells in a bbox') },
-      '/cells/lookup': { get: operation('Look up the bathymetry cell at a position') },
-      '/changes': { get: operation('List suspected or confirmed seabed changes') },
+      '/cells/lookup': {
+        get: operation('Look up the bathymetry cell at a position')
+      },
+      '/changes': {
+        get: operation('List suspected or confirmed seabed changes')
+      },
       '/projection': { get: operation('Describe the current tide projection') },
-      '/vector-style.json': { get: operation('Describe the Freeboard vector portrayal') },
-      '/tiles/{z}/{x}/{y}.pbf': { get: operation('Render interactive S-57-style MVT cells') },
-      '/csb/status': { get: operation('Inspect cached NOAA crowdsourced depth coverage') },
-      '/csb/soundings': { get: operation('Query cached raw NOAA crowdsourced depths') },
+      '/vector-style.json': {
+        get: operation('Describe the Freeboard vector portrayal')
+      },
+      '/tiles/{z}/{x}/{y}.pbf': {
+        get: operation('Render interactive S-57-style MVT cells')
+      },
+      '/csb/status': {
+        get: operation('Inspect cached NOAA crowdsourced depth coverage')
+      },
+      '/csb/coverage/{z}/{x}/{y}.png': {
+        get: operation('NOAA global indexed track coverage, not depth')
+      },
+      '/csb/journeys': {
+        get: operation('List vessel and source-file journey segments')
+      },
+      '/csb/journey': {
+        get: operation('Page original measurements by vessel and journey')
+      },
+      '/csb/soundings': {
+        get: operation('Query cached raw NOAA crowdsourced depths')
+      },
       '/csb/tiles/{z}/{x}/{y}.pbf': {
         get: operation('Render cached NOAA crowdsourced depth soundings')
       },
-      '/admin/backfill': { post: operation('Import up to 31 days from Signal K History API') },
-      '/admin/reprocess': { post: operation('Rebuild QC classifications and surface cells') },
-      '/admin/csb/import': { post: operation('Cache NOAA crowdsourced depths for a region') }
+      '/admin/backfill': {
+        post: operation('Import up to 31 days from Signal K History API')
+      },
+      '/admin/reprocess': {
+        post: operation('Rebuild QC classifications and surface cells')
+      },
+      '/admin/csb/import': {
+        post: operation('Cache NOAA crowdsourced depths for a region')
+      }
     }
   }
 }

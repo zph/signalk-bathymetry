@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bathymetry journeys</title><link rel="stylesheet" href="journeys.css"></head>
+<body><main>
+<header><a href="./">Local Bathymetry</a><h1>Crowdsourced journeys</h1><p>Individual NOAA vessel tracks and observed depths. Depth reference and vessel offsets are unknown.</p></header>
+<section class="controls" aria-label="Journey filters">
+<label>Vessel<select id="vessel"><option value="">All vessels</option></select></label>
+<label>Provider<select id="provider"><option value="">All providers</option></select></label>
+<label>Instrument<select id="instrument"><option value="">All instruments</option></select></label>
+<label>From<input id="from" type="date"></label><label>Through<input id="through" type="date"></label>
+<button id="refresh">Refresh</button></section>
+<p id="status" role="status">Loading journeys…</p>
+<div class="workspace"><section class="map-section">
+<div class="map-tools"><button id="fit">Fit tracks</button><button id="out" aria-label="Zoom out">−</button><button id="in" aria-label="Zoom in">+</button><span id="scale"></span></div>
+<canvas id="map" tabindex="0" aria-label="Vessel journeys map. Drag to pan, use plus and minus to zoom, or select a journey below. Click a track to inspect its nearest measurement."></canvas>
+<p>Drag to pan; scroll or use + / − to zoom. Colors identify vessels. Dots retain tiny tracks at ocean scale. Lines stop at observation gaps.</p>
+<div id="legend" class="legend"></div>
+</section><aside><h2>Journeys</h2><p>Source-file segments, listed by vessel and collection time.</p><select id="journey" size="8" aria-label="Select a journey"></select><button id="show-all">Show all matching tracks</button><p id="detail">Select a journey or a point on the map.</p></aside></div>
+<section><h2>Individual measurements</h2><p id="point-detail" role="status">Select a journey to inspect its original observations.</p><div class="table-wrap"><table><thead><tr><th>Observed time (UTC)</th><th>Depth (m)</th><th>Latitude</th><th>Longitude</th></tr></thead><tbody id="rows"></tbody></table></div><div class="pages"><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></div></section>
+</main><script src="journeys.js"></script></body></html>

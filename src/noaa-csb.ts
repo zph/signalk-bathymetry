@@ -80,6 +80,14 @@ export class NoaaCsbStore {
     )
   }
 
+  hasFullFile(name: string): boolean {
+    return Boolean(this.db.prepare('SELECT 1 FROM csb_full_files WHERE name=?').get(name))
+  }
+
+  markFullFile(name: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO csb_full_files(name) VALUES (?)').run(name)
+  }
+
   ingestFile(
     metadata: CsbFileMetadata,
     soundings: readonly CsbSounding[],
@@ -106,6 +114,7 @@ export class NoaaCsbStore {
           metadata.instrument
         )
       this.db.prepare('DELETE FROM csb_soundings WHERE file_name=?').run(metadata.name)
+      this.db.prepare('DELETE FROM csb_full_files WHERE name=?').run(metadata.name)
       for (const sounding of soundings) {
         const fingerprint = createHash('sha256')
           .update(
@@ -248,7 +257,37 @@ export class NoaaCsbStore {
   }
 
   revision(): number {
-    return this.stats().latestImportMs ?? 0
+    const row = this.db
+      .prepare('SELECT coalesce(max(imported_at_ms),0) revision FROM csb_files')
+      .get() as { revision: number }
+    return row.revision
+  }
+
+  journeys(): Record<string, unknown>[] {
+    return this.db
+      .prepare(`SELECT unique_id vesselId, file_uuid journeyId,
+      max(platform) vessel, max(provider) provider, max(instrument) instrument,
+      min(observed_at_ms) startAtMs, max(observed_at_ms) endAtMs,
+      count(*) samples, min(depth_mm)/1000.0 minDepthM, max(depth_mm)/1000.0 maxDepthM,
+      min(lon_e7)/1e7 west, min(lat_e7)/1e7 south,
+      max(lon_e7)/1e7 east, max(lat_e7)/1e7 north
+      FROM csb_soundings GROUP BY unique_id, file_uuid ORDER BY startAtMs, vesselId`)
+      .all() as Record<string, unknown>[]
+  }
+
+  journeyPoints(
+    vessel: string,
+    journey: string,
+    after = 0,
+    limit = 5000
+  ): Record<string, unknown>[] {
+    return this.db
+      .prepare(`SELECT id, lon_e7/1e7 longitude, lat_e7/1e7 latitude,
+      depth_mm/1000.0 depthM, observed_at_ms observedAtMs, platform vessel,
+      provider, instrument FROM csb_soundings
+      WHERE unique_id=? AND file_uuid=? AND id>?
+      ORDER BY id LIMIT ?`)
+      .all(vessel, journey, after, limit) as Record<string, unknown>[]
   }
 
   private migrate(): void {
@@ -284,6 +323,8 @@ export class NoaaCsbStore {
       CREATE INDEX IF NOT EXISTS csb_position_idx ON csb_soundings(lon_e7, lat_e7);
       CREATE INDEX IF NOT EXISTS csb_time_idx ON csb_soundings(observed_at_ms);
       CREATE INDEX IF NOT EXISTS csb_file_idx ON csb_soundings(file_name);
+      CREATE INDEX IF NOT EXISTS csb_journey_idx ON csb_soundings(unique_id, file_uuid, id);
+      CREATE TABLE IF NOT EXISTS csb_full_files (name TEXT PRIMARY KEY REFERENCES csb_files(name) ON DELETE CASCADE);
     `)
   }
 }
@@ -340,7 +381,9 @@ export class NoaaCsbImporter {
             continue
           }
           try {
-            const response = await this.fetcher(csbCsvUrl(metadata.name), { signal })
+            const response = await this.fetcher(csbCsvUrl(metadata.name), {
+              signal
+            })
             if (!response.ok) throw new Error(`NOAA archive returned HTTP ${response.status}`)
             const parsed = parseCsbCsv(await response.text(), bbox, metadata)
             const result = this.store.ingestFile(metadata, parsed.soundings, parsed.invalid)
