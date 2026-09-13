@@ -134,7 +134,7 @@ POST /admin/csb/import {"bbox":[west,south,east,north],"maxFiles":2000}
 
 The NOAA import starts in the background. Poll `/csb/status` for discovery,
 download, invalid-row, and completion counts. Binnacle and other chart clients
-discover **NOAA Crowdsourced Depth Soundings** as a normal vector chart
+discover **NOAA Crowdsourced Bathymetry** as a chart
 resource, disabled by default. Its depths are raw observations with unknown
 vertical datum and vessel offsets. They remain visually and structurally
 separate from the plugin's tide-reduced local surface and are supplemental
@@ -152,22 +152,26 @@ accepts `vessel`, `journey`, and an optional `after` cursor and returns up to
 5,000 original observations with a `next` cursor. These endpoints require the
 same read access as the depth layer. The explorer reads cached data only.
 
-Enable **NOAA Crowdsourced Coverage and Tracks** in Binnacle's chart list for
-worldwide translucent red coverage, including at world zoom. The footprint is
+Enable **NOAA Crowdsourced Bathymetry** in Binnacle's chart list and expand its
+child layers. **Coverage** shows translucent red haze below zoom 9, including at
+world zoom. **Tracks** shows the finer indexed survey paths from zoom 9. The footprint is
 NOAA's indexed track coverage, not depth, a safety boundary, or proof that every
 record contains a valid sounding. Rendering uses NOAA's map export rather than a
 record-limited feature query. PNG tiles use the ordinary chart tile cache plus a
 one-day server disk cache, with cached fallback during upstream outages.
 
-Enable **NOAA Crowdsourced Depth Soundings** to automatically download observations
+Enable the **Depths** facet to automatically download observations
 when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by
 zoom-12 area, serialized, and retained in SQLite across restarts. Full source files
 are retained so panning elsewhere on the same vessel journey does not lose data.
 Older viewport-clipped cache entries are downloaded again on demand. Automatic
 imports are bounded to 50 files per area and 64 MB per file; use the manual importer
 for denser areas. `/csb/status` reports pending viewport areas and download errors.
-Zoomed-out coverage never triggers bulk depth downloads. Neither layer is enabled
-automatically merely by installing the plugin.
+Zoomed-out coverage never triggers bulk depth downloads. The parent layer is disabled
+by default, with all three facets selected for when it is enabled. Each facet has
+independent visibility and opacity under the master layer. Binnacle migrates the old
+two-layer device settings to these facets, preserving hidden depths and existing opacity.
+Other chart clients can still consume the sounding vector tile URL directly.
 
 ## Storage decision
 

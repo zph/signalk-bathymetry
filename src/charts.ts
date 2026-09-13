@@ -30,21 +30,6 @@ export function createChartProvider(
     }
     if (csbStore) {
       result[NOAA_CSB_VECTOR_ID] = noaaCsbChartResource(config)
-      result['signalk-bathymetry-noaa-csb-coverage'] = {
-        identifier: 'signalk-bathymetry-noaa-csb-coverage',
-        name: 'NOAA Crowdsourced Coverage and Tracks',
-        description:
-          'Red haze marks NOAA indexed survey tracks worldwide, not depth or navigable water. Zoom in and enable NOAA Crowdsourced Depth Soundings to download observations for the visible area.',
-        type: 'tilelayer',
-        format: 'png',
-        chartFormat: 'png',
-        minzoom: 0,
-        maxzoom: 18,
-        bounds: [-180, -85.051129, 180, 85.051129],
-        tilemapUrl: '/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png',
-        defaultOpacity: 0.65,
-        defaultVisible: false
-      }
     }
     return result
   }
@@ -75,17 +60,18 @@ function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown>
   const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf'
   return {
     identifier: NOAA_CSB_VECTOR_ID,
-    name: 'NOAA Crowdsourced Depth Soundings',
+    name: 'NOAA Crowdsourced Bathymetry',
     description:
-      'Downloads and caches NOAA observations in the visible area at zoom 12 and closer. Enable NOAA Crowdsourced Coverage and Tracks to find available areas. Unknown vertical datum and vessel offsets; not for navigation.',
+      'Coverage haze, indexed survey tracks, and downloaded depth observations in one layer. Expand the layer to select Coverage, Tracks, and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
     type: 'S-57',
     format: 'pbf',
     chartFormat: 'pbf',
-    minzoom: 12,
+    minzoom: 0,
     maxzoom: config.maxZoom,
     bounds: [-180, -85.051129, 180, 85.051129],
     url: tileUrl,
     tilemapUrl: tileUrl,
+    coverageTilemapUrl: '/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png',
     layers: ['SOUNDG'],
     chartLayers: ['SOUNDG'],
     featureInfo: 'noaa-csb-sounding',

@@ -67,9 +67,8 @@ test('chart provider advertises cached NOAA depths as a separate disabled layer'
   assert.match(String(resource.description), /unknown/i)
   assert.match(String(resource.description), /not for navigation/i)
   assert.deepEqual(resource.bounds, [-180, -85.051129, 180, 85.051129])
-  assert.equal(resource.minzoom, 12)
-  const coverage = resources['signalk-bathymetry-noaa-csb-coverage'] as Record<string, unknown>
-  assert.equal(coverage.minzoom, 0)
-  assert.equal(coverage.format, 'png')
-  assert.match(String(coverage.tilemapUrl), /csb\/coverage/)
+  assert.equal(resource.minzoom, 0)
+  assert.equal(resource.name, 'NOAA Crowdsourced Bathymetry')
+  assert.equal(resources['signalk-bathymetry-noaa-csb-coverage'], undefined)
+  assert.match(String(resource.coverageTilemapUrl), /csb\/coverage/)
 })
