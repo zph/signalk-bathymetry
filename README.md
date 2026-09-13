@@ -35,6 +35,9 @@ sharing design is in
   uncertainty, evidence counts, recency, and change metadata.
 - One read-only chart-datum MVT resource discovered by Freeboard-SK and
   Binnacle, with a provider-owned vector portrayal for Freeboard.
+- A separate, offline-first NOAA Crowdsourced Bathymetry sounding layer. Region
+  imports cache actual point depths in SQLite, discard invalid NOAA sentinel
+  values, retain source metadata, and never interpolate across unmeasured gaps.
 - HTTP inspection API, administrator backfill/reprocessing endpoints, OpenAPI
   metadata, and a vector quality-control web app with live tide projection.
 
@@ -116,6 +119,9 @@ GET /changes?since=
 GET /projection?at=now
 GET /vector-style.json
 GET /tiles/{z}/{x}/{y}.pbf?mode=datum|water
+GET /csb/status
+GET /csb/soundings?bbox=west,south,east,north
+GET /csb/tiles/{z}/{x}/{y}.pbf
 ```
 
 Administrator-only operations:
@@ -123,7 +129,16 @@ Administrator-only operations:
 ```text
 POST /admin/backfill  {"from":"...","to":"..."}  # maximum 31 days/request
 POST /admin/reprocess
+POST /admin/csb/import {"bbox":[west,south,east,north],"maxFiles":2000}
 ```
+
+The NOAA import starts in the background. Poll `/csb/status` for discovery,
+download, invalid-row, and completion counts. Binnacle and other chart clients
+discover **NOAA Crowdsourced Depth Soundings** as a normal vector chart
+resource, disabled by default. Its depths are raw observations with unknown
+vertical datum and vessel offsets. They remain visually and structurally
+separate from the plugin's tide-reduced local surface and are supplemental
+reference data only, not navigation data.
 
 ## Storage decision
 

@@ -19,6 +19,8 @@ import {
   EMPTY_BATHYMETRY_MVT,
   type VectorTileRenderer
 } from './vector-tiles'
+import type { NoaaCsbImporter, NoaaCsbStore } from './noaa-csb'
+import { NOAA_CSB_MVT_REVISION, type NoaaCsbTileRenderer } from './noaa-csb-tiles'
 
 const DEPTH_MODES = new Set<DepthMode>(['datum', 'water'])
 const CURRENT_TILE_CACHE_SECONDS = 600
@@ -31,6 +33,9 @@ export interface Runtime {
   autoBackfill: AutoBackfill
   depthUnits: DepthUnitPreferences
   vectorRenderer: VectorTileRenderer
+  csbStore: NoaaCsbStore
+  csbImporter: NoaaCsbImporter
+  csbRenderer: NoaaCsbTileRenderer
 }
 
 export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime | undefined): void {
@@ -153,6 +158,59 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     response.json(vectorStyle(runtime.config))
   })
 
+  read.get('/csb/status', (_request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    response.json({
+      warning:
+        'Raw crowdsourced observations with unknown vertical datum and vessel offsets; not for navigation.',
+      import: runtime.csbImporter.status(),
+      store: runtime.csbStore.stats()
+    })
+  })
+
+  read.get('/csb/soundings', (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const bbox = requiredBbox(request)
+      const limit = integerQuery(request, 'limit', 10_000, 1, 100_000)
+      response.json({
+        datum: 'UNKNOWN',
+        warning: 'Raw observed depths; not for navigation.',
+        soundings: runtime.csbStore.listSoundings(bbox, limit)
+      })
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
+  read.get('/csb/tiles/:z/:x/:y.pbf', (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 0, 24)
+      const maxCoordinate = 2 ** z - 1
+      const x = integerParam(request, 'x', 0, maxCoordinate)
+      const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
+      const etag = `W/"${NOAA_CSB_MVT_REVISION}-${runtime.csbStore.revision()}-${z}-${x}-${y}"`
+      if (request.headers['if-none-match'] === etag) {
+        response.status(304).end()
+        return
+      }
+      const rendered = runtime.csbRenderer.render(z, x, y)
+      response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+      response.set('Cache-Control', 'private, max-age=86400')
+      response.set('ETag', etag)
+      response.set('X-CSB-Sounding-Count', String(rendered.soundingCount))
+      response.set('X-CSB-Point-Count', String(rendered.pointCount))
+      response.set('X-CSB-Cell-Meters', String(rendered.cellMeters))
+      response.send(rendered.tile)
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
   read.get('/tiles/:z/:x/:y.pbf', (request, response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
@@ -242,6 +300,19 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       sendError(response, error)
     }
   })
+
+  router.post('/admin/csb/import', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const body = objectBody(request)
+      const bbox = bodyBbox(body)
+      const maxFiles = bodyInteger(body, 'maxFiles', 2000, 1, 2000)
+      response.status(202).json(runtime.csbImporter.start(bbox, maxFiles))
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
 }
 
 export function openApi(): object {
@@ -257,8 +328,14 @@ export function openApi(): object {
       '/projection': { get: operation('Describe the current tide projection') },
       '/vector-style.json': { get: operation('Describe the Freeboard vector portrayal') },
       '/tiles/{z}/{x}/{y}.pbf': { get: operation('Render interactive S-57-style MVT cells') },
+      '/csb/status': { get: operation('Inspect cached NOAA crowdsourced depth coverage') },
+      '/csb/soundings': { get: operation('Query cached raw NOAA crowdsourced depths') },
+      '/csb/tiles/{z}/{x}/{y}.pbf': {
+        get: operation('Render cached NOAA crowdsourced depth soundings')
+      },
       '/admin/backfill': { post: operation('Import up to 31 days from Signal K History API') },
-      '/admin/reprocess': { post: operation('Rebuild QC classifications and surface cells') }
+      '/admin/reprocess': { post: operation('Rebuild QC classifications and surface cells') },
+      '/admin/csb/import': { post: operation('Cache NOAA crowdsourced depths for a region') }
     }
   }
 }
@@ -446,5 +523,26 @@ function bodyTime(body: Record<string, unknown>, key: string): number {
   if (typeof raw !== 'string') throw new HttpError(400, `${key} is required as ISO 8601`)
   const value = Date.parse(raw)
   if (!Number.isFinite(value)) throw new HttpError(400, `${key} must be ISO 8601`)
+  return value
+}
+
+function bodyBbox(body: Record<string, unknown>): [number, number, number, number] {
+  const value = body.bbox
+  if (!Array.isArray(value)) throw new HttpError(400, 'bbox is required as [west,south,east,north]')
+  return parseBbox(value.join(','))
+}
+
+function bodyInteger(
+  body: Record<string, unknown>,
+  key: string,
+  fallback: number,
+  minimum: number,
+  maximum: number
+): number {
+  if (body[key] === undefined) return fallback
+  const value = Number(body[key])
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new HttpError(400, `${key} must be an integer between ${minimum} and ${maximum}`)
+  }
   return value
 }

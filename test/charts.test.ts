@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createChartProvider } from '../src/charts'
 import { normalizeConfig } from '../src/config'
 import { BathymetryStore } from '../src/store'
+import { NoaaCsbStore } from '../src/noaa-csb'
 
 test('chart provider advertises one styled datum MVT chart', async (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-chart-test-'))
@@ -44,4 +45,25 @@ test('chart provider advertises one styled datum MVT chart', async (t) => {
     default: number
   }
   assert.equal((scale.minimum + scale.maximum) / 2, scale.default)
+})
+
+test('chart provider advertises cached NOAA depths as a separate disabled layer', async (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-csb-chart-test-'))
+  const config = normalizeConfig({ overlayOpacity: 0.8 })
+  const store = new BathymetryStore(join(directory, 'local.sqlite'), config)
+  const csbStore = new NoaaCsbStore(join(directory, 'csb.sqlite'))
+  t.after(() => {
+    store.close()
+    csbStore.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const provider = createChartProvider(store, config, csbStore)
+  const resources = await provider.methods.listResources({})
+  const resource = resources['signalk-bathymetry-noaa-csb-vector'] as Record<string, unknown>
+  assert.ok(resource)
+  assert.deepEqual(resource.layers, ['SOUNDG'])
+  assert.equal(resource.defaultVisible, false)
+  assert.equal(resource.defaultOpacity, 0.65)
+  assert.match(String(resource.description), /unknown/i)
+  assert.match(String(resource.description), /not for navigation/i)
 })

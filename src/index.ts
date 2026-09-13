@@ -9,6 +9,8 @@ import { HistoryBackfill } from './history-backfill'
 import { BathymetryStore } from './store'
 import { DepthUnitPreferences } from './depth-units'
 import { VectorTileRenderer } from './vector-tiles'
+import { NoaaCsbImporter, NoaaCsbStore } from './noaa-csb'
+import { NoaaCsbTileRenderer } from './noaa-csb-tiles'
 
 const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
   let runtime: Runtime | undefined
@@ -25,6 +27,8 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
         const config = normalizeConfig(rawConfig)
         const dataDirectory = app.getDataDirPath()
         const store = new BathymetryStore(join(dataDirectory, 'bathymetry.sqlite'), config)
+        const csbStore = new NoaaCsbStore(join(dataDirectory, 'noaa-csb.sqlite'))
+        const csbImporter = new NoaaCsbImporter(csbStore)
         const capture = new CaptureEngine(app, store, config)
         const history = new HistoryBackfill(app, capture, config)
         const autoBackfill = new AutoBackfill(app, store, history, config)
@@ -38,6 +42,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           (atMs) => capture.latestTideProjection(atMs),
           () => depthUnits.current()
         )
+        const csbRenderer = new NoaaCsbTileRenderer(csbStore, config.minZoom, config.maxZoom)
         runtime = {
           config,
           store,
@@ -45,9 +50,12 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           history,
           autoBackfill,
           depthUnits,
-          vectorRenderer
+          vectorRenderer,
+          csbStore,
+          csbImporter,
+          csbRenderer
         }
-        app.registerResourceProvider(createChartProvider(store, config))
+        app.registerResourceProvider(createChartProvider(store, config, csbStore))
         capture.start()
         autoBackfill.start()
         depthUnits.start()
@@ -78,10 +86,12 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
 }
 
 function stopRuntime(runtime: Runtime): void {
+  runtime.csbImporter.stop()
   runtime.depthUnits.stop()
   runtime.autoBackfill.stop()
   runtime.capture.stop()
   runtime.store.close()
+  runtime.csbStore.close()
 }
 
 export = constructor

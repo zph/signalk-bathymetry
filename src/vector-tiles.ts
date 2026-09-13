@@ -125,6 +125,24 @@ interface VectorFeature {
   point: { x: number; y: number }
 }
 
+export interface VectorPointFeature {
+  properties: Record<string, string | number | boolean>
+  point: { x: number; y: number }
+}
+
+export function encodeSoundingPointTile(features: readonly VectorPointFeature[]): Buffer {
+  const tile = new ProtoWriter()
+  tile.bytesField(
+    3,
+    encodeLayer(
+      BATHYMETRY_MVT_SOUNDINGS_LAYER,
+      features.map((feature) => ({ ...feature, ring: [] })),
+      'point'
+    )
+  )
+  return tile.finish()
+}
+
 function cellFeature(
   cell: SurfaceCell,
   bounds: ReturnType<typeof tileMercatorBounds>,

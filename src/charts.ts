@@ -1,6 +1,7 @@
 import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
+import type { NoaaCsbStore } from './noaa-csb'
 import {
   CELL_SIZE_SCALE_DEFAULT,
   CELL_SIZE_SCALE_MAX,
@@ -9,13 +10,15 @@ import {
 } from './tiles'
 
 const DATUM_VECTOR_ID = 'signalk-bathymetry-datum-vector'
+const NOAA_CSB_VECTOR_ID = 'signalk-bathymetry-noaa-csb-vector'
 
 export function createChartProvider(
   store: BathymetryStore,
-  config: BathymetryConfig
+  config: BathymetryConfig,
+  csbStore?: NoaaCsbStore
 ): ResourceProvider {
   const resources = (): Record<string, unknown> => {
-    return {
+    const result: Record<string, unknown> = {
       [DATUM_VECTOR_ID]: vectorChartResource(
         DATUM_VECTOR_ID,
         `Local Bathymetry Cells — ${config.targetDatum}`,
@@ -25,6 +28,8 @@ export function createChartProvider(
         true
       )
     }
+    if (csbStore) result[NOAA_CSB_VECTOR_ID] = noaaCsbChartResource(csbStore, config)
+    return result
   }
   return {
     type: 'charts',
@@ -45,6 +50,32 @@ export function createChartProvider(
         throw new Error('Bathymetry chart resources are read-only')
       }
     }
+  }
+}
+
+function noaaCsbChartResource(
+  store: NoaaCsbStore,
+  config: BathymetryConfig
+): Record<string, unknown> {
+  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf'
+  return {
+    identifier: NOAA_CSB_VECTOR_ID,
+    name: 'NOAA Crowdsourced Depth Soundings',
+    description:
+      'Cached raw observed depths from NOAA Crowdsourced Bathymetry. Vertical datum and vessel offsets are unknown. Supplemental reference only, not for navigation.',
+    type: 'S-57',
+    format: 'pbf',
+    chartFormat: 'pbf',
+    minzoom: config.minZoom,
+    maxzoom: config.maxZoom,
+    bounds: expandedBounds(store.stats().bounds),
+    url: tileUrl,
+    tilemapUrl: tileUrl,
+    layers: ['SOUNDG'],
+    chartLayers: ['SOUNDG'],
+    featureInfo: 'noaa-csb-sounding',
+    defaultOpacity: Math.min(config.overlayOpacity, 0.65),
+    defaultVisible: false
   }
 }
 
