@@ -6,6 +6,7 @@ import { createChartProvider } from '../src/charts'
 import { normalizeConfig } from '../src/config'
 import { BathymetryStore } from '../src/store'
 import { NoaaCsbStore } from '../src/noaa-csb'
+import { NOAA_CSB_COVERAGE_STYLE_REVISION } from '../src/noaa-csb-viewport'
 
 test('chart provider advertises one styled datum MVT chart', async (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-chart-test-'))
@@ -71,4 +72,8 @@ test('chart provider advertises cached NOAA depths as a separate disabled layer'
   assert.equal(resource.name, 'NOAA Crowdsourced Bathymetry')
   assert.equal(resources['signalk-bathymetry-noaa-csb-coverage'], undefined)
   assert.match(String(resource.coverageTilemapUrl), /csb\/coverage/)
+  assert.equal(
+    resource.coverageTilemapUrl,
+    `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`
+  )
 })

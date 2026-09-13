@@ -2,6 +2,7 @@ import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
 import type { NoaaCsbStore } from './noaa-csb'
+import { NOAA_CSB_COVERAGE_STYLE_REVISION } from './noaa-csb-viewport'
 import {
   CELL_SIZE_SCALE_DEFAULT,
   CELL_SIZE_SCALE_MAX,
@@ -71,7 +72,7 @@ function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown>
     bounds: [-180, -85.051129, 180, 85.051129],
     url: tileUrl,
     tilemapUrl: tileUrl,
-    coverageTilemapUrl: '/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png',
+    coverageTilemapUrl: `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`,
     layers: ['SOUNDG'],
     chartLayers: ['SOUNDG'],
     featureInfo: 'noaa-csb-sounding',

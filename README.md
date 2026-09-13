@@ -154,11 +154,14 @@ same read access as the depth layer. The explorer reads cached data only.
 
 Enable **NOAA Crowdsourced Bathymetry** in Binnacle's chart list and expand its
 child layers. **Coverage** shows translucent red haze below zoom 9, including at
-world zoom. **Tracks** shows the finer indexed survey paths from zoom 9. The footprint is
-NOAA's indexed track coverage, not depth, a safety boundary, or proof that every
-record contains a valid sounding. Rendering uses NOAA's map export rather than a
-record-limited feature query. PNG tiles use the ordinary chart tile cache plus a
-one-day server disk cache, with cached fallback during upstream outages.
+world zoom. **Tracks** shows the finer indexed survey paths from zoom 9. Their
+rendered strokes progressively taper from 1.5 at zoom 9 to 0.6 at zoom 15 and
+closer, keeping the overlay from overpowering chart detail as you zoom in. The
+footprint is NOAA's indexed track coverage, not depth, a safety boundary, or proof
+that every record contains a valid sounding. Rendering uses NOAA's map export
+rather than a record-limited feature query. PNG tiles use the ordinary chart tile
+cache plus a one-day server disk cache, with cached fallback during upstream
+outages.
 
 Enable the **Depths** facet to automatically download observations
 when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by

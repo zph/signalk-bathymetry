@@ -5,6 +5,13 @@ import { mercatorToLonLat, tileMercatorBounds } from './geo'
 
 const DAY = 86_400_000
 const MAX_FILES = 50
+export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v2'
+
+/** Keep detailed survey tracks from growing visually dominant at close chart zooms. */
+export function coverageStrokeWidth(z: number): number {
+  if (z < 9) return 4
+  return Math.max(60, 150 - (z - 9) * 15) / 100
+}
 
 export function csbTileBbox(z: number, x: number, y: number): Bbox {
   const b = tileMercatorBounds(z, x, y)
@@ -34,7 +41,7 @@ export function coverageUrl(z: number, x: number, y: number): string {
               type: 'esriSLS',
               style: 'esriSLSSolid',
               color: [220, 25, 35, z < 9 ? 80 : 160],
-              width: z < 9 ? 4 : 1.5
+              width: coverageStrokeWidth(z)
             }
           }
         }
@@ -127,7 +134,7 @@ export class NoaaCsbViewport {
   }
 
   private async loadCoverage(key: string, z: number, x: number, y: number): Promise<Buffer> {
-    const path = join(this.cacheDir, `${key}.json`)
+    const path = join(this.cacheDir, `${NOAA_CSB_COVERAGE_STYLE_REVISION}-${key}.json`)
     let cached: { at: number; image: string } | undefined
     try {
       cached = JSON.parse(await readFile(path, 'utf8')) as typeof cached
