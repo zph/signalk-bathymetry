@@ -229,6 +229,22 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
+  read.get('/csb/nautical-lanes/:z/:x/:y.png', async (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 0, 24)
+      const x = integerParam(request, 'x', 0, 2 ** z - 1)
+      const y = integerParam(request, 'y', 0, 2 ** z - 1, '.png')
+      const image = await runtime.csbViewport.nauticalLanes(z, x, y)
+      response.set('Content-Type', 'image/png')
+      response.set('Cache-Control', 'private, max-age=86400')
+      response.send(image)
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
   read.get('/csb/tiles/:z/:x/:y.pbf', async (request, response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
@@ -422,6 +438,9 @@ export function openApi(): object {
       },
       '/csb/coverage/{z}/{x}/{y}.png': {
         get: operation('NOAA global indexed track coverage, not depth')
+      },
+      '/csb/nautical-lanes/{z}/{x}/{y}.png': {
+        get: operation('Generalized NOAA journey density for traffic awareness')
       },
       '/csb/journeys': {
         get: operation('List vessel and source-file journey segments')

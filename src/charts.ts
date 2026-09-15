@@ -2,7 +2,10 @@ import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
 import type { NoaaCsbStore } from './noaa-csb'
-import { NOAA_CSB_COVERAGE_STYLE_REVISION } from './noaa-csb-viewport'
+import {
+  NOAA_CSB_COVERAGE_STYLE_REVISION,
+  NOAA_CSB_LANES_STYLE_REVISION
+} from './noaa-csb-viewport'
 import {
   CELL_SIZE_SCALE_DEFAULT,
   CELL_SIZE_SCALE_MAX,
@@ -63,7 +66,7 @@ function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown>
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',
     description:
-      'Coverage haze, indexed survey tracks, downloaded depth observations, and approximate depth-colored contours in one layer. Expand the layer to select Coverage, Tracks, and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
+      'Coverage haze, indexed survey tracks, generalized nautical lanes, downloaded depth observations, and approximate depth-colored contours in one layer. Expand the layer to select Coverage, Tracks, Nautical lanes, and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
     type: 'S-57',
     format: 'pbf',
     chartFormat: 'pbf',
@@ -73,6 +76,7 @@ function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown>
     url: tileUrl,
     tilemapUrl: tileUrl,
     coverageTilemapUrl: `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`,
+    nauticalLanesTilemapUrl: `/plugins/signalk-bathymetry/csb/nautical-lanes/{z}/{x}/{y}.png?style=${NOAA_CSB_LANES_STYLE_REVISION}`,
     layers: ['SOUNDG', 'DEPCNT'],
     chartLayers: ['SOUNDG', 'DEPCNT'],
     featureInfo: 'noaa-csb-sounding',

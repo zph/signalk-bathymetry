@@ -154,7 +154,7 @@ same read access as the depth layer. The explorer reads cached data only.
 
 Enable **NOAA Crowdsourced Bathymetry** in Binnacle's chart list and expand its
 child layers. **Coverage** shows translucent red haze below zoom 9, including at
-world zoom. **Tracks** shows the finer indexed survey paths from zoom 9. Their
+world zoom. **Tracks** shows the finer indexed survey paths at every zoom. Their
 rendered strokes progressively taper from 1.5 at zoom 9 to 0.6 at zoom 15 and
 closer, keeping the overlay from overpowering chart detail as you zoom in. The
 footprint is NOAA's indexed track coverage, not depth, a safety boundary, or proof
@@ -162,6 +162,14 @@ that every record contains a valid sounding. Rendering uses NOAA's map export
 rather than a record-limited feature query. PNG tiles use the ordinary chart tile
 cache plus a one-day server disk cache, with cached fallback during upstream
 outages.
+
+**Nautical lanes** generalizes those NOAA journeys into a traffic-awareness
+portrayal. A narrow core keeps uncommon passages visible, while a faint wider
+shoulder compounds where independent activities overlap, making frequently used
+corridors appear stronger and wider. The facet is selected by default with the
+other NOAA facets, can be disabled independently, and is not a regulated shipping
+lane or a collision-avoidance instruction. Its PNG tiles use the same one-day
+bounded cache behavior as coverage.
 
 Enable the **Depths** facet to automatically download observations
 when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by
@@ -171,7 +179,7 @@ Older viewport-clipped cache entries are downloaded again on demand. Automatic
 imports are bounded to 50 files per area and 64 MB per file; use the manual importer
 for denser areas. `/csb/status` reports pending viewport areas and download errors.
 Zoomed-out coverage never triggers bulk depth downloads. The parent layer is disabled
-by default, with all three facets selected for when it is enabled. Each facet has
+by default, with all four facets selected for when it is enabled. Each facet has
 independent visibility and opacity under the master layer. Binnacle migrates the old
 two-layer device settings to these facets, preserving hidden depths and existing opacity.
 Other chart clients can still consume the sounding vector tile URL directly.

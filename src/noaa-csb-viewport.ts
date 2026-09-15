@@ -6,6 +6,7 @@ import { mercatorToLonLat, tileMercatorBounds } from './geo'
 const DAY = 86_400_000
 const MAX_FILES = 50
 export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v3'
+export const NOAA_CSB_LANES_STYLE_REVISION = 'nautical-lanes-v1'
 
 /** Keep detailed survey tracks from growing visually dominant at close chart zooms. */
 export function coverageStrokeWidth(z: number): number {
@@ -51,11 +52,58 @@ export function coverageUrl(z: number, x: number, y: number): string {
   return `https://gis.ngdc.noaa.gov/arcgis/rest/services/csb/MapServer/export?${query}`
 }
 
+/**
+ * Render a generalized traffic layer from NOAA's journey lines.
+ *
+ * Every journey receives a narrow core and a low-opacity shoulder. A solitary activity therefore
+ * stays thin and faint, while independently repeated journeys compound into a darker, apparently
+ * wider corridor. It is a traffic-density cue, not a regulated traffic-separation scheme.
+ */
+export function nauticalLanesUrl(z: number, x: number, y: number): string {
+  const query = new URLSearchParams({
+    f: 'image',
+    bbox: csbTileBbox(z, x, y).join(','),
+    bboxSR: '4326',
+    imageSR: '3857',
+    size: '256,256',
+    format: 'png32',
+    transparent: 'true',
+    dynamicLayers: JSON.stringify([
+      laneLayer(10, [150, 20, 45, 24], laneShoulderWidth(z)),
+      laneLayer(11, [150, 20, 45, 86], laneCoreWidth(z))
+    ])
+  })
+  return `https://gis.ngdc.noaa.gov/arcgis/rest/services/csb/MapServer/export?${query}`
+}
+
+export function laneShoulderWidth(z: number): number {
+  if (z < 5) return 2.4
+  return Math.max(0.9, 2.4 - (z - 4) * 0.15)
+}
+
+export function laneCoreWidth(z: number): number {
+  return Math.max(0.35, laneShoulderWidth(z) * 0.28)
+}
+
+function laneLayer(id: number, color: [number, number, number, number], width: number) {
+  return {
+    id,
+    source: { type: 'mapLayer', mapLayerId: 1 },
+    drawingInfo: {
+      renderer: {
+        type: 'simple',
+        symbol: { type: 'esriSLS', style: 'esriSLSSolid', color, width }
+      }
+    }
+  }
+}
+
 /** Tile demand is the viewport trigger. Bounded, coalesced downloads never scan the world. */
 export class NoaaCsbViewport {
   private pending = new Map<string, Promise<void>>()
   private checked = new Map<string, number>()
   private coveragePending = new Map<string, Promise<Buffer>>()
+  private lanesPending = new Map<string, Promise<Buffer>>()
   private tail: Promise<void> = Promise.resolve()
   private abort = new AbortController()
   private lastError: string | undefined
@@ -129,6 +177,21 @@ export class NoaaCsbViewport {
     return task
   }
 
+  async nauticalLanes(z: number, x: number, y: number): Promise<Buffer> {
+    const key = `${z}-${x}-${y}`
+    const existing = this.lanesPending.get(key)
+    if (existing) return existing
+    if (this.lanesPending.size >= 32) throw new Error('NOAA nautical lanes are busy; retry shortly')
+    const task = this.loadRenderedTile(
+      join(this.cacheDir, `${NOAA_CSB_LANES_STYLE_REVISION}-${key}.json`),
+      nauticalLanesUrl(z, x, y)
+    ).finally(() => {
+      this.lanesPending.delete(key)
+    })
+    this.lanesPending.set(key, task)
+    return task
+  }
+
   private signal() {
     return AbortSignal.any([this.abort.signal, AbortSignal.timeout(60_000)])
   }
@@ -162,6 +225,31 @@ export class NoaaCsbViewport {
     } catch (error) {
       const fallback = cached ?? legacyCached
       if (fallback) return Buffer.from(fallback.image, 'base64')
+      throw error
+    }
+  }
+
+
+  private async loadRenderedTile(path: string, url: string): Promise<Buffer> {
+    let cached: { at: number; image: string } | undefined
+    try {
+      cached = JSON.parse(await readFile(path, 'utf8')) as typeof cached
+    } catch {
+      /* first request */
+    }
+    if (cached && Date.now() - cached.at < DAY) return Buffer.from(cached.image, 'base64')
+    try {
+      const response = await this.fetcher(url, { signal: this.signal() })
+      if (!response.ok) throw new Error(`NOAA nautical lanes returned HTTP ${response.status}`)
+      const image = Buffer.from(await response.arrayBuffer())
+      if (!image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+        throw new Error('NOAA nautical lanes did not return a PNG')
+      }
+      await mkdir(this.cacheDir, { recursive: true })
+      await writeFile(path, JSON.stringify({ at: Date.now(), image: image.toString('base64') }))
+      return image
+    } catch (error) {
+      if (cached) return Buffer.from(cached.image, 'base64')
       throw error
     }
   }

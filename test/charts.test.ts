@@ -76,4 +76,5 @@ test('chart provider advertises cached NOAA depths as a separate disabled layer'
     resource.coverageTilemapUrl,
     `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`
   )
+  assert.match(String(resource.nauticalLanesTilemapUrl), /csb\/nautical-lanes/)
 })

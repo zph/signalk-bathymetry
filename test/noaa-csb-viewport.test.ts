@@ -6,7 +6,10 @@ import { NoaaCsbStore } from '../src/noaa-csb'
 import {
   NoaaCsbViewport,
   coverageStrokeWidth,
-  coverageUrl
+  coverageUrl,
+  laneCoreWidth,
+  laneShoulderWidth,
+  nauticalLanesUrl
 } from '../src/noaa-csb-viewport'
 
 test('viewport demand coalesces, retains full files across areas, and does no work at world zoom', async (t) => {
@@ -65,6 +68,43 @@ test('coverage survey tracks taper at close zoom without becoming illegible', ()
   const style = JSON.parse(url.searchParams.get('dynamicLayers')!)
   assert.ok(Math.abs(style[0].drawingInfo.renderer.symbol.width - 1.05) < Number.EPSILON * 10)
   assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 180])
+})
+
+test('nautical lanes compound repeated activities into stronger corridor shoulders', () => {
+  const url = new URL(nauticalLanesUrl(8, 40, 98))
+  const layers = JSON.parse(url.searchParams.get('dynamicLayers')!)
+  assert.equal(layers.length, 2)
+  assert.deepEqual(layers[0].source, { type: 'mapLayer', mapLayerId: 1 })
+  assert.deepEqual(layers[0].drawingInfo.renderer.symbol.color, [150, 20, 45, 24])
+  assert.deepEqual(layers[1].drawingInfo.renderer.symbol.color, [150, 20, 45, 86])
+  assert.ok(layers[0].drawingInfo.renderer.symbol.width > layers[1].drawingInfo.renderer.symbol.width)
+  assert.equal(laneShoulderWidth(4), 2.4)
+  assert.equal(laneShoulderWidth(20), 0.9)
+  assert.equal(laneCoreWidth(20), 0.35)
+})
+
+test('nautical lane tiles coalesce and persist independently of coverage', async (t) => {
+  const dir = mkdtempSync(join(process.cwd(), '.csb-lanes-'))
+  const store = new NoaaCsbStore(join(dir, 'store.sqlite'))
+  t.after(() => {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  let calls = 0
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return new Response(png)
+  }
+  const service = new NoaaCsbViewport(store, dir, fetcher)
+  const images = await Promise.all(Array.from({ length: 8 }, () => service.nauticalLanes(8, 40, 98)))
+  assert.deepEqual(images[0], png)
+  assert.equal(calls, 1)
+  const restarted = new NoaaCsbViewport(store, dir, fetcher)
+  await restarted.nauticalLanes(8, 40, 98)
+  assert.equal(calls, 1)
+  service.stop()
+  restarted.stop()
 })
 
 test('coverage coalesces concurrent requests and survives restart from disk', async (t) => {
