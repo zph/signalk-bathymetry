@@ -3,6 +3,7 @@ import { depthReferenceFromPath } from './config'
 import { haversineMeters } from './geo'
 import { aggregateStationaryWindow } from './stationary'
 import type { BathymetryStore } from './store'
+import type { RawJournal } from './raw-journal'
 import type {
   BathymetryConfig,
   CaptureStatus,
@@ -21,6 +22,7 @@ const TIDE_STATION_PATH = 'environment.tide.stationName'
 export class CaptureEngine {
   private readonly unsubscribes: Unsubscribes = []
   private position?: TimestampedValue<Position>
+  private positionHasInstrumentTime = false
   private sog?: TimestampedValue<number>
   private cog?: TimestampedValue<number>
   private heave?: TimestampedValue<number>
@@ -36,11 +38,13 @@ export class CaptureEngine {
   private flushTimer: NodeJS.Timeout | undefined
   private running = false
   private lastError: string | undefined
+  private rawError: string | undefined
 
   constructor(
     private readonly app: ServerAPI,
     private readonly store: BathymetryStore,
-    private readonly config: BathymetryConfig
+    private readonly config: BathymetryConfig,
+    private readonly journal?: RawJournal
   ) {}
 
   start(): void {
@@ -75,7 +79,7 @@ export class CaptureEngine {
           {
             path: this.config.depthPath as Path,
             policy: 'instant' as const,
-            minPeriod: 100
+            minPeriod: 0
           }
         ],
         sourcePolicy: this.config.depthSource ? 'all' : 'preferred'
@@ -159,20 +163,49 @@ export class CaptureEngine {
         if (depthSubscription && path === this.config.depthPath) {
           if (this.config.depthSource && source !== this.config.depthSource) continue
           if (typeof pathValue.value === 'number') {
+            this.recordRaw(pathValue.value, timestampMs, source, parseTimestamp(update.timestamp) !== undefined)
             this.handleDepth(pathValue.value, timestampMs, source, context)
           }
           continue
         }
-        this.updateAuxiliary(path, pathValue.value, timestampMs, source)
+        this.updateAuxiliary(path, pathValue.value, timestampMs, source, parseTimestamp(update.timestamp) !== undefined)
       }
     }
   }
 
-  private updateAuxiliary(path: string, value: unknown, timestampMs: number, source: string): void {
+  rawStatus(): { error: string | null } { return { error: this.rawError ?? null } }
+
+  private recordRaw(depthM: number, observedAtMs: number, source: string, instrumentTime: boolean): void {
+    if (!this.journal || !Number.isFinite(depthM)) return
+    const reference = depthReferenceFromPath(this.config.depthPath)
+    const quality: string[] = []
+    if (!instrumentTime) quality.push('receipt-time-only')
+    if (observedAtMs > Date.now() + 1000) quality.push('future-observation-time')
+    if (!this.position) quality.push('missing-position')
+    else if (Math.abs(observedAtMs - this.position.timestampMs) > this.config.maxLiveTimeSkewSeconds * 1000) quality.push('stale-position')
+    if (this.position && !this.positionHasInstrumentTime) quality.push('position-receipt-time-only')
+    if (depthM <= 0 || depthM < this.config.instrumentMinM || depthM > this.config.instrumentMaxM) quality.push('outside-instrument-range')
+    try {
+      this.journal.append({ observedAtMs, receivedAtMs: Date.now(), timestampOrigin: instrumentTime ? 'instrument' : 'receipt',
+        depthM, depthReference: reference, depthSource: source, position: this.position ?? null,
+        tide: this.latestTideProjection(observedAtMs) ?? null,
+        surfaceOffsetM: reference === 'belowSurface' ? 0 : reference === 'belowKeel' ? this.config.surfaceToKeelM : this.config.surfaceToTransducerM,
+        installation: { ...this.config.recordingInstallation, depthPath: this.config.depthPath,
+          positionPath: this.config.positionPath, offsetProvenance: 'plugin-configuration',
+          tideMetadataProvenance: 'plugin-configuration; method assumed predicted' }, quality })
+      this.rawError = undefined
+    } catch (error) {
+      this.rawError = errorMessage(error)
+      this.setError(`Raw journal write failed: ${this.rawError}`)
+    }
+  }
+
+  private updateAuxiliary(path: string, value: unknown, timestampMs: number, source: string, instrumentTime: boolean): void {
     if (path === this.config.positionPath) {
       const position = parsePosition(value)
       if (position) {
         this.position = { value: position, timestampMs, source }
+        this.positionHasInstrumentTime = instrumentTime
         this.movementAnchor ??= position
       }
     } else if (path === SOG_PATH && validNumber(value)) {

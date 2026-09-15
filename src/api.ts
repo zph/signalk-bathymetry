@@ -22,11 +22,13 @@ import {
 import type { NoaaCsbImporter, NoaaCsbStore } from './noaa-csb'
 import { NOAA_CSB_MVT_REVISION, type NoaaCsbTileRenderer } from './noaa-csb-tiles'
 import type { NoaaCsbViewport } from './noaa-csb-viewport'
+import type { RawJournal } from './raw-journal'
 
 const DEPTH_MODES = new Set<DepthMode>(['datum', 'water'])
 const CURRENT_TILE_CACHE_SECONDS = 600
 
 export interface Runtime {
+  journal: RawJournal
   config: BathymetryConfig
   store: BathymetryStore
   capture: CaptureEngine
@@ -330,6 +332,46 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
   })
 
   // Routes registered directly on PluginRouter remain administrator-only.
+  router.post('/admin/recording/status', (_request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (runtime) response.json({ ...runtime.journal.status(), capture: runtime.capture.rawStatus() })
+  })
+  router.post('/admin/recording/read', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try { response.json(runtime.journal.read(request.body?.afterId ?? 0, request.body?.limit ?? 1000)) }
+    catch (error) { sendError(response, new HttpError(400, String(error))) }
+  })
+  router.post('/admin/recording/sample', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try { response.json(runtime.journal.sample(request.body?.afterId ?? 0, request.body?.limit ?? 1000)) }
+    catch (error) { sendError(response, new HttpError(400, String(error))) }
+  })
+  router.post('/admin/recording/consent', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    if (typeof request.body?.enabled !== 'boolean' || (request.body.enabled && request.body.license !== 'CC0-1.0')) {
+      response.status(400).json({ error: 'Provide enabled boolean and license CC0-1.0 to opt in to public track publication' }); return
+    }
+    runtime.journal.consent(request.body.enabled)
+    response.json(runtime.journal.status())
+  })
+  router.post('/admin/recording/prepare', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try { response.json(runtime.journal.prepare(request.body?.limit ?? 1000)) }
+    catch (error) { sendError(response, new HttpError(400, String(error))) }
+  })
+  router.post('/admin/recording/acknowledge', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    if (typeof request.body?.batchId !== 'string' || request.body?.receivedByPartner !== true) {
+      response.status(400).json({ error: 'Provide batchId and receivedByPartner: true only after confirmed receipt' }); return
+    }
+    try { runtime.journal.acknowledge(request.body.batchId); response.json(runtime.journal.status()) }
+    catch (error) { sendError(response, new HttpError(400, String(error))) }
+  })
   router.post('/admin/backfill', async (request: Request, response: Response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
@@ -371,8 +413,14 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
 export function openApi(): object {
   return {
     openapi: '3.0.3',
-    info: { title: 'Signal K Local Bathymetry API', version: '0.5.0' },
+    info: { title: 'Signal K Local Bathymetry API', version: '0.6.0' },
     paths: {
+      '/admin/recording/status': { post: operation('Administrator raw journal status and publication state') },
+      '/admin/recording/read': { post: operation('Read raw observations and calculate depth from captured tide and offsets') },
+      '/admin/recording/sample': { post: operation('Download local review GeoJSON without enabling publication') },
+      '/admin/recording/consent': { post: operation('Explicitly enable CC0 publication preparation or revoke permission') },
+      '/admin/recording/prepare': { post: operation('Prepare or retry a durable local export batch') },
+      '/admin/recording/acknowledge': { post: operation('Record confirmed partner receipt and advance the export cursor') },
       '/status': { get: operation('Plugin, capture, and storage status') },
       '/soundings': {
         get: operation('Query provenance-rich raw soundings and QC states')

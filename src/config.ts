@@ -1,6 +1,7 @@
 import type { BathymetryConfig, DepthDisplayMode, DepthReference } from './types'
 
 export const DEFAULT_CONFIG: BathymetryConfig = {
+  recordingInstallation: {},
   positionPath: 'navigation.position',
   depthPath: 'environment.depth.belowTransducer',
   surfaceToKeelM: 1.5,
@@ -49,6 +50,8 @@ type RawConfig = Partial<BathymetryConfig>
 export function normalizeConfig(raw: object): BathymetryConfig {
   const input = raw as RawConfig
   const config: BathymetryConfig = { ...DEFAULT_CONFIG, ...input }
+  config.recordingInstallation = input.recordingInstallation && typeof input.recordingInstallation === 'object' && !Array.isArray(input.recordingInstallation)
+    ? input.recordingInstallation : {}
 
   config.targetDatum = nonEmpty(config.targetDatum, DEFAULT_CONFIG.targetDatum).toUpperCase()
   config.positionPath = nonEmpty(config.positionPath, DEFAULT_CONFIG.positionPath)
@@ -119,6 +122,20 @@ export function pluginSchema(): object {
     type: 'object',
     title: 'Local Bathymetry',
     properties: {
+      recordingInstallation: {
+        type: 'object', title: 'Raw recording: vessel and sensor installation (unknown until measured)',
+        properties: {
+          vesselType: { type: 'string', title: 'Vessel type' },
+          sounderModel: { type: 'string', title: 'Sounder make/model' },
+          gpsModel: { type: 'string', title: 'GNSS make/model' },
+          positionReference: { type: 'string', title: 'Position reference point (e.g. GNSS antenna)' },
+          offsetsVerified: { type: 'boolean', title: 'Configured vertical offsets have been measured', default: false },
+          antennaToTransducerForwardM: { type: 'number', title: 'GNSS to transducer: forward metres' },
+          antennaToTransducerStarboardM: { type: 'number', title: 'GNSS to transducer: starboard metres' },
+          sounderCorrections: { type: 'string', title: 'Corrections already applied by sounder (or unknown)' },
+          notes: { type: 'string', title: 'Installation/calibration notes' }
+        }
+      },
       positionPath: {
         type: 'string',
         title: 'Vessel position path (relative to vessels.self)',

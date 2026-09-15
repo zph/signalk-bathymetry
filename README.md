@@ -15,6 +15,12 @@ sharing design is in
 
 ## Implemented MVP
 
+- Independent raw sounding journal, tide snapshots and correction on read,
+  installation metadata, administrator review downloads, explicit publication
+  opt-in, and durable export batches with confirmed-receipt cursors. See
+  [contribution instructions](docs/CONTRIBUTING_CSB.md) and
+  [Crowd Depth review](docs/CROWD_DEPTH_REVIEW.md).
+
 - Live synchronization of position, depth, tide, SOG, course, and heave.
 - Below-keel, below-surface, or below-transducer datum reduction with explicit
   vessel offsets and uncertainty.

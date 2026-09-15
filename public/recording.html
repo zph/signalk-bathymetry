@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Raw bathymetry recording</title><link rel="stylesheet" href="styles.css"></head>
+<body><main>
+  <header><a href="./">Local Bathymetry</a><h1>Raw recording and sharing</h1></header>
+  <p>Soundings are saved on this boat. Tide information is kept alongside them; corrected depths are calculated when read. Existing chart history remains available separately.</p>
+  <p id="status" role="status">Loading…</p>
+  <section><h2>Review a sample</h2>
+    <p>Download a local GeoJSON sample to discuss with a Trusted Node. It contains positions and times. Downloading does not publish or advance the export cursor.</p>
+    <label>After record <input id="after" type="number" min="0" value="0"></label>
+    <button id="sample">Download next 1,000 records as a sample</button>
+    <button id="raw">Download raw records with recalculated depths</button>
+  </section>
+  <section><h2>Publication permission</h2>
+    <p>Sharing makes selected vessel tracks public under CC0. A random vessel ID does not hide the locations visited. This version prepares local files for manual handoff; it does not upload automatically.</p>
+    <label><input id="consent" type="checkbox">I opt in to public sharing under CC0 1.0.</label>
+    <button id="save">Save publication preference</button>
+    <button id="prepare">Download next export batch</button>
+    <p>Keep the batch file until the receiving partner confirms receipt. Repeating a download returns the same pending batch.</p>
+    <label>Confirmed batch ID <input id="batch" type="text"></label>
+    <label><input id="received" type="checkbox">The receiving partner confirmed this batch was received.</label>
+    <button id="ack">Record receipt and advance</button>
+  </section>
+  <p><a href="https://www.ncei.noaa.gov/iho-data-centre-digital-bathymetry">NOAA contribution instructions</a>: contact bathydata@iho.int to join an existing Trusted Node or discuss becoming one.</p>
+  <p id="error" role="alert"></p>
+</main><script src="recording.js"></script></body></html>

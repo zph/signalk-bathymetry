@@ -22,6 +22,7 @@ export interface TimestampedValue<T> {
 export type DepthDisplayMode = 'conservative' | 'predicted'
 
 export interface BathymetryConfig {
+  recordingInstallation: Record<string, unknown>
   positionPath: string
   depthPath: string
   depthSource?: string
