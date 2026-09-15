@@ -6,7 +6,7 @@ import { mercatorToLonLat, tileMercatorBounds } from './geo'
 const DAY = 86_400_000
 const MAX_FILES = 50
 export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v3'
-export const NOAA_CSB_LANES_STYLE_REVISION = 'nautical-lanes-v2'
+export const NOAA_CSB_LANES_STYLE_REVISION = 'nautical-lanes-v3'
 
 /** Keep detailed survey tracks from growing visually dominant at close chart zooms. */
 export function coverageStrokeWidth(z: number): number {
@@ -55,9 +55,9 @@ export function coverageUrl(z: number, x: number, y: number): string {
 /**
  * Render a generalized traffic layer from NOAA's journey lines.
  *
- * Every journey receives a narrow core and a low-opacity shoulder. A solitary activity therefore
- * stays thin and faint, while independently repeated journeys compound into a darker, apparently
- * wider corridor. It is a traffic-density cue, not a regulated traffic-separation scheme.
+ * Every journey receives an opaque light shoulder and an opaque dark core. The requested tile zoom
+ * controls the source scale, so broad corridors resolve into increasingly precise paths as the user
+ * zooms in. Client-side facet opacity controls the transparency of the complete rendering.
  */
 export function nauticalLanesUrl(z: number, x: number, y: number): string {
   const query = new URLSearchParams({
@@ -69,8 +69,8 @@ export function nauticalLanesUrl(z: number, x: number, y: number): string {
     format: 'png32',
     transparent: 'true',
     dynamicLayers: JSON.stringify([
-      laneLayer(10, [150, 20, 45, 14], laneShoulderWidth(z)),
-      laneLayer(11, [150, 20, 45, 45], laneCoreWidth(z))
+      laneLayer(10, [218, 105, 125, 255], laneShoulderWidth(z)),
+      laneLayer(11, [125, 20, 45, 255], laneCoreWidth(z))
     ])
   })
   return `https://gis.ngdc.noaa.gov/arcgis/rest/services/csb/MapServer/export?${query}`

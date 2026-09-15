@@ -70,17 +70,25 @@ test('coverage survey tracks taper at close zoom without becoming illegible', ()
   assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 180])
 })
 
-test('nautical lanes compound repeated activities into stronger corridor shoulders', () => {
+test('nautical lanes use opaque colors and resolve finer paths at closer zooms', () => {
   const url = new URL(nauticalLanesUrl(8, 40, 98))
   const layers = JSON.parse(url.searchParams.get('dynamicLayers')!)
   assert.equal(layers.length, 2)
   assert.deepEqual(layers[0].source, { type: 'mapLayer', mapLayerId: 1 })
-  assert.deepEqual(layers[0].drawingInfo.renderer.symbol.color, [150, 20, 45, 14])
-  assert.deepEqual(layers[1].drawingInfo.renderer.symbol.color, [150, 20, 45, 45])
+  assert.deepEqual(layers[0].drawingInfo.renderer.symbol.color, [218, 105, 125, 255])
+  assert.deepEqual(layers[1].drawingInfo.renderer.symbol.color, [125, 20, 45, 255])
   assert.ok(layers[0].drawingInfo.renderer.symbol.width > layers[1].drawingInfo.renderer.symbol.width)
   assert.equal(laneShoulderWidth(4), 1)
   assert.equal(laneShoulderWidth(20), 0.45)
   assert.equal(laneCoreWidth(20), 0.2)
+
+  const closeUrl = new URL(nauticalLanesUrl(14, 655, 1583))
+  const closeLayers = JSON.parse(closeUrl.searchParams.get('dynamicLayers')!)
+  assert.notEqual(closeUrl.searchParams.get('bbox'), url.searchParams.get('bbox'))
+  assert.ok(
+    closeLayers[0].drawingInfo.renderer.symbol.width <
+      layers[0].drawingInfo.renderer.symbol.width
+  )
 })
 
 test('nautical lane tiles coalesce and persist independently of coverage', async (t) => {
