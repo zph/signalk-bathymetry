@@ -9,7 +9,7 @@ const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
 const MAX_TRACK_VERTICES = 6_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-mvt4'
+export const NOAA_CSB_MVT_REVISION = 'csb-mvt5'
 
 export interface RenderedCsbTile {
   tile: Buffer
