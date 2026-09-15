@@ -26,8 +26,34 @@ test('labels select shallowest neighbors and reveal more observations as zoom in
   assert.ok(high.pointCount>low.pointCount)
   assert.ok(low.tile.includes(Buffer.from('SHALLOW')))
   assert.ok(!low.tile.includes(Buffer.from('DEEP')))
-  assert.ok(low.tile.includes(Buffer.from('TRACKPOINT')))
+  assert.ok(!low.tile.includes(Buffer.from('TRACKPOINT')))
   assert.equal(low.soundingCount,points.length)
+})
+
+test('detailed tiles include screen-simplified journey lines', () => {
+  const points = Array.from({ length: 5000 }, (_, index) => ({
+    uniqueId: 'vessel',
+    fileUuid: 'journey',
+    longitude: -122.45 + index * 0.000001,
+    latitude: 37.75 + index * 0.0000005,
+    depthM: 12,
+    observedAtMs: 1_700_000_000_000 + index * 1000,
+    platform: 'test',
+    provider: 'test',
+    instrument: 'test'
+  }))
+  const tile = tileForPosition(-122.45, 37.75, 14)
+  const rendered = new NoaaCsbTileRenderer({} as NoaaCsbStore).render(
+    14,
+    tile.x,
+    tile.y,
+    points
+  )
+  assert.ok(rendered.tile.includes(Buffer.from('TRACKLINE')))
+  const rawPoints = encodeSoundingPointTile(
+    points.map((_, index) => ({ point: { x: index % 4096, y: index % 2048 }, properties: {} }))
+  )
+  assert.ok(rendered.tile.length < rawPoints.length / 2)
 })
 
 test('dense sounding tiles do not exceed the JavaScript argument stack', () => {

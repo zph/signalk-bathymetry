@@ -1,6 +1,6 @@
 import { lonLatToMercator, mercatorToLonLat, tileMercatorBounds } from './geo'
 import type { CsbSounding, NoaaCsbStore } from './noaa-csb'
-import { encodeSoundingPointTile, encodeDepthContourTile } from './vector-tiles'
+import { encodeSoundingPointTile, encodeDepthContourTile, encodeTrackLineTile } from './vector-tiles'
 import { observedContours } from './noaa-csb-contours'
 
 const MVT_EXTENT = 4096
@@ -8,7 +8,7 @@ const EARTH_CIRCUMFERENCE_M = 40_075_016.686
 const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-mvt2'
+export const NOAA_CSB_MVT_REVISION = 'csb-mvt3'
 
 export interface RenderedCsbTile {
   tile: Buffer
@@ -85,16 +85,68 @@ export class NoaaCsbTileRenderer {
     })
     return {
       tile: Buffer.concat([encodeSoundingPointTile(features),
-        encodeSoundingPointTile(soundings.map(s => {
-          const p=lonLatToMercator(s)
-          return {point:{x:Math.round((p.x-bounds.minX)/span*MVT_EXTENT),
-            y:Math.round((bounds.maxY-p.y)/span*MVT_EXTENT)},properties:{}}
-        }),'TRACKPOINT'),encodeDepthContourTile(observedContours(soundings,z,x,y))]),
+        encodeTrackLineTile(trackLines(soundings, bounds)),
+        encodeDepthContourTile(observedContours(soundings,z,x,y))]),
       soundingCount: soundings.length,
       pointCount: features.length,
       cellMeters
     }
   }
+}
+
+function trackLines(
+  soundings: readonly CsbSounding[],
+  bounds: ReturnType<typeof tileMercatorBounds>
+) {
+  const span = bounds.maxX - bounds.minX
+  const journeys = new Map<string, CsbSounding[]>()
+  for (const sounding of soundings) {
+    const key = `${sounding.uniqueId}\u0000${sounding.fileUuid}`
+    const journey = journeys.get(key)
+    if (journey) journey.push(sounding)
+    else journeys.set(key, [sounding])
+  }
+  const features: Array<{
+    properties: Record<string, string | number | boolean>
+    line: Array<{ x: number; y: number }>
+  }> = []
+  const minimumStep = (MVT_EXTENT / 256) * 1.5
+  const flush = (line: Array<{ x: number; y: number }>) => {
+    if (line.length >= 2) features.push({ properties: { CSB_NOT_FOR_NAVIGATION: true }, line })
+  }
+  for (const journey of journeys.values()) {
+    journey.sort((left, right) => left.observedAtMs - right.observedAtMs)
+    let line: Array<{ x: number; y: number }> = []
+    let lastSeen: { x: number; y: number } | undefined
+    let previousTime: number | undefined
+    const finishLine = () => {
+      const previous = line.at(-1)
+      if (lastSeen && previous && (lastSeen.x !== previous.x || lastSeen.y !== previous.y)) {
+        line.push(lastSeen)
+      }
+      flush(line)
+      line = []
+      lastSeen = undefined
+    }
+    for (const sounding of journey) {
+      if (previousTime !== undefined && sounding.observedAtMs - previousTime > 5 * 60_000) {
+        finishLine()
+      }
+      const mercator = lonLatToMercator(sounding)
+      const point = {
+        x: Math.round(((mercator.x - bounds.minX) / span) * MVT_EXTENT),
+        y: Math.round(((bounds.maxY - mercator.y) / span) * MVT_EXTENT)
+      }
+      const previous = line.at(-1)
+      if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) >= minimumStep) {
+        line.push(point)
+      }
+      lastSeen = point
+      previousTime = sounding.observedAtMs
+    }
+    finishLine()
+  }
+  return features
 }
 
 function aggregateSoundings(soundings: readonly CsbSounding[], cellMeters: number): Aggregate[] {

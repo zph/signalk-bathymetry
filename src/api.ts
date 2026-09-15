@@ -238,7 +238,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const y = integerParam(request, 'y', 0, 2 ** z - 1, '.png')
       const image = await runtime.csbViewport.nauticalLanes(z, x, y)
       response.set('Content-Type', 'image/png')
-      response.set('Cache-Control', 'private, max-age=86400')
+      response.set('Cache-Control', 'private, max-age=86400, immutable')
       response.send(image)
     } catch (error) {
       sendError(response, error)

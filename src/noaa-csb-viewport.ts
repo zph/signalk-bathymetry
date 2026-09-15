@@ -5,6 +5,7 @@ import { mercatorToLonLat, tileMercatorBounds } from './geo'
 
 const DAY = 86_400_000
 const MAX_FILES = 50
+const MAX_RENDERED_TILE_CACHE_BYTES = 32 * 1024 * 1024
 export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v3'
 export const NOAA_CSB_LANES_STYLE_REVISION = 'nautical-lanes-v3'
 
@@ -104,6 +105,8 @@ export class NoaaCsbViewport {
   private checked = new Map<string, number>()
   private coveragePending = new Map<string, Promise<Buffer>>()
   private lanesPending = new Map<string, Promise<Buffer>>()
+  private lanesCache = new Map<string, Buffer>()
+  private lanesCacheBytes = 0
   private tail: Promise<void> = Promise.resolve()
   private abort = new AbortController()
   private lastError: string | undefined
@@ -179,17 +182,43 @@ export class NoaaCsbViewport {
 
   async nauticalLanes(z: number, x: number, y: number): Promise<Buffer> {
     const key = `${z}-${x}-${y}`
+    const cached = this.lanesCache.get(key)
+    if (cached) {
+      this.lanesCache.delete(key)
+      this.lanesCache.set(key, cached)
+      return cached
+    }
     const existing = this.lanesPending.get(key)
     if (existing) return existing
     if (this.lanesPending.size >= 32) throw new Error('NOAA nautical lanes are busy; retry shortly')
     const task = this.loadRenderedTile(
       join(this.cacheDir, `${NOAA_CSB_LANES_STYLE_REVISION}-${key}.json`),
       nauticalLanesUrl(z, x, y)
-    ).finally(() => {
-      this.lanesPending.delete(key)
-    })
+    )
+      .then((image) => {
+        this.rememberLane(key, image)
+        return image
+      })
+      .finally(() => {
+        this.lanesPending.delete(key)
+      })
     this.lanesPending.set(key, task)
     return task
+  }
+
+  private rememberLane(key: string, image: Buffer): void {
+    const existing = this.lanesCache.get(key)
+    if (existing) this.lanesCacheBytes -= existing.byteLength
+    this.lanesCache.delete(key)
+    this.lanesCache.set(key, image)
+    this.lanesCacheBytes += image.byteLength
+    while (this.lanesCacheBytes > MAX_RENDERED_TILE_CACHE_BYTES && this.lanesCache.size > 1) {
+      const oldestKey = this.lanesCache.keys().next().value
+      if (!oldestKey) break
+      const oldest = this.lanesCache.get(oldestKey)
+      this.lanesCache.delete(oldestKey)
+      this.lanesCacheBytes -= oldest?.byteLength ?? 0
+    }
   }
 
   private signal() {

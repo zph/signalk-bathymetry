@@ -157,11 +157,12 @@ child layers. **Tracks** generalizes NOAA journeys into a traffic-awareness
 portrayal at every zoom. Each path has an opaque light shoulder and an opaque dark
 core. The facet opacity control changes the complete rendering instead of baking
 transparency into individual tracks. Zoomed-out tiles trade path precision for a
-clear regional trajectory view. Each closer zoom requests the source at a finer
-scale and tapers the strokes, progressively revealing individual paths. These are
+clear regional trajectory view through zoom 11. At zoom 12 and closer, the same
+facet switches to screen-simplified journey lines generated from locally served
+observations. This avoids repeated close-zoom image rendering by NOAA. These are
 not regulated shipping lanes or collision-avoidance instructions. PNG tiles use
-the ordinary chart tile cache plus a one-day server disk cache, with cached
-fallback during upstream outages.
+the ordinary chart tile cache, a bounded 32 MB memory cache, and a one-day server
+disk cache, with cached fallback during upstream outages.
 
 Enable the **Depths** facet to automatically download observations
 when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by

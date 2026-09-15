@@ -130,6 +130,11 @@ export interface VectorPointFeature {
   point: { x: number; y: number }
 }
 
+export interface VectorLineFeature {
+  properties: Record<string, string | number | boolean>
+  line: Array<{ x: number; y: number }>
+}
+
 export function encodeSoundingPointTile(features: readonly VectorPointFeature[], layerName = BATHYMETRY_MVT_SOUNDINGS_LAYER): Buffer {
   const tile = new ProtoWriter()
   tile.bytesField(
@@ -138,6 +143,26 @@ export function encodeSoundingPointTile(features: readonly VectorPointFeature[],
       layerName,
       features.map((feature) => ({ ...feature, ring: [] })),
       'point'
+    )
+  )
+  return tile.finish()
+}
+
+export function encodeTrackLineTile(
+  features: readonly VectorLineFeature[],
+  layerName = 'TRACKLINE'
+): Buffer {
+  const tile = new ProtoWriter()
+  tile.bytesField(
+    3,
+    encodeLayer(
+      layerName,
+      features.map((feature) => ({
+        properties: feature.properties,
+        ring: feature.line,
+        point: feature.line[0] ?? { x: 0, y: 0 }
+      })),
+      'line'
     )
   )
   return tile.finish()

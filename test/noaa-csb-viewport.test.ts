@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { NoaaCsbStore } from '../src/noaa-csb'
@@ -108,6 +108,12 @@ test('nautical lane tiles coalesce and persist independently of coverage', async
   const images = await Promise.all(Array.from({ length: 8 }, () => service.nauticalLanes(8, 40, 98)))
   assert.deepEqual(images[0], png)
   assert.equal(calls, 1)
+  const cachePath = join(dir, 'nautical-lanes-v3-8-40-98.json')
+  const diskTile = readFileSync(cachePath)
+  writeFileSync(cachePath, 'corrupt after first load')
+  assert.deepEqual(await service.nauticalLanes(8, 40, 98), png)
+  assert.equal(calls, 1)
+  writeFileSync(cachePath, diskTile)
   const restarted = new NoaaCsbViewport(store, dir, fetcher)
   await restarted.nauticalLanes(8, 40, 98)
   assert.equal(calls, 1)

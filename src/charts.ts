@@ -58,14 +58,14 @@ export function createChartProvider(
 }
 
 async function noaaCsbChartResource(config: BathymetryConfig): Promise<Record<string, unknown>> {
-  let tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=contours-v5'
+  let tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=contours-v6'
   try {
     // The optional local bridge falls back to this provider if its cache is down.
     require.resolve('signalk-chart-locker/dist/http/local-noaa.js')
     const ready = await fetch('http://127.0.0.1:3000/plugins/signalk-chart-locker/local-noaa/ready', {
       redirect: 'error', signal: AbortSignal.timeout(500)
     })
-    if (ready.ok) tileUrl = '/plugins/signalk-chart-locker/local-noaa/{z}/{x}/{y}?display=contours-v5'
+    if (ready.ok) tileUrl = '/plugins/signalk-chart-locker/local-noaa/{z}/{x}/{y}?display=contours-v6'
     await ready.body?.cancel()
   } catch { /* Stock servers continue to use the direct provider. */ }
   return {
