@@ -80,7 +80,8 @@ python tools/noaa-csb-metadata/pipeline.py build \
 python tools/noaa-csb-metadata/pipeline.py daemon \
   --root /data/noaa-csb-archive/crowbar/mirror \
   --output /data/noaa-csb-archive/crowbar/parquet \
-  --workers 16 --interval-seconds 86400
+  --workers 16 --interval-seconds 86400 \
+  --full-rebuild-interval-seconds 2592000
 ```
 
 The first command freezes an upper `lastUpdated` cutoff, downloads pages in
@@ -93,7 +94,11 @@ watermark unless it happens to cover the whole response.
 catalog, then sleeps until the next incremental cycle. It writes `status.json`
 throughout the sync so the archive dashboard can show stage, progress, rate, ETA,
 watermark, and next run. The first successful baseline is the only full Crowbar
-scan; later cycles request records changed since the stored cutoff.
+scan; later cycles request records changed since the stored cutoff. Those delta
+cycles replace only affected `collection_year` partitions, including old and new
+partitions when NOAA moves or corrects a record. Unaffected Parquet files are
+hard-linked into the atomic replacement tree instead of rewritten. A full atomic
+compaction runs every 30 days by default to revalidate the complete history.
 
 The S3 crawl uses unauthenticated `ListObjectsV2`, follows continuation tokens,
 and checkpoints every 1,000-object page. `sync-s3-sharded` first discovers the

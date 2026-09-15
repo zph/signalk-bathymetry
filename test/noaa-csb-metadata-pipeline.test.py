@@ -296,6 +296,62 @@ class ParquetBuildTest(unittest.TestCase):
                 [("20240101_boat", "4.56"), ("20250101_boat", "4.56")],
             )
 
+    def test_incremental_build_replaces_only_affected_year_partition(self):
+        try:
+            import duckdb
+        except ImportError:
+            self.skipTest("duckdb is not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "mirror"
+            output = Path(directory) / "parquet"
+
+            def write_run(run_id, rows):
+                pages = root / "runs" / run_id / "pages"
+                pages.mkdir(parents=True)
+                with gzip.open(pages / "page-0000001.jsonl.gz", "wt", encoding="utf-8") as handle:
+                    for row in rows:
+                        handle.write(json.dumps(row) + "\n")
+                (pages.parent / "manifest.json").write_text(json.dumps({
+                    "complete": True, "downloaded_pages": 1,
+                    "downloaded_records": len(rows)
+                }))
+
+            baseline = [
+                PIPELINE.normalize_record({
+                    "traceId": "trace-2024", "fileName": "20240101_boat.tar.gz",
+                    "lastUpdated": "2026-01-01T00:00:00Z", "startTime": "2024-01-01T00:00:00Z",
+                    "metadata": {}
+                }, "2026-01-01T00:00:00Z"),
+                PIPELINE.normalize_record({
+                    "traceId": "trace-2025", "fileName": "20250101_boat.tar.gz",
+                    "lastUpdated": "2026-01-01T00:00:00Z", "startTime": "2025-01-01T00:00:00Z",
+                    "metadata": {}
+                }, "2026-01-01T00:00:00Z"),
+            ]
+            write_run("baseline", baseline)
+            first = PIPELINE.build_parquet(root, output)
+            untouched = next((output / "records" / "collection_year=2024").glob("*.parquet"))
+            untouched_inode = untouched.stat().st_ino
+
+            changed = PIPELINE.normalize_record({
+                "traceId": "trace-2025", "fileName": "20250101_boat.tar.gz",
+                "lastUpdated": "2026-09-15T00:00:00Z", "startTime": "2025-01-01T00:00:00Z",
+                "metadata": {"crs": {"vertical": "Waterline"}}
+            }, "2026-09-15T00:00:00Z")
+            write_run("delta", [changed])
+            second = PIPELINE.build_parquet(root, output, incremental_run_id="delta")
+
+            self.assertEqual(first["build_mode"], "full")
+            self.assertEqual(second["build_mode"], "incremental")
+            self.assertEqual(second["affected_years"], [2025])
+            self.assertEqual(untouched.stat().st_ino, untouched_inode)
+            qualification = duckdb.connect().execute(
+                "SELECT qualification FROM read_parquet(?) WHERE trace_id='trace-2025'",
+                [str(output / "records" / "**" / "*.parquet")],
+            ).fetchone()[0]
+            self.assertEqual(qualification, "datum_correctable")
+            self.assertEqual(second["current_trace_records"], 2)
+
 
 class IncrementalDaemonTest(unittest.TestCase):
     def test_sync_writes_dashboard_progress_and_advances_watermark(self):

@@ -37,6 +37,27 @@ ITEMS_PER_PAGE = 200
 DEFAULT_S3_LIST_URL = "https://noaa-dcdb-bathymetry-pds.s3.amazonaws.com/"
 DEFAULT_S3_PREFIX = "csb/csv/"
 S3_PAGE_SIZE = 1000
+METADATA_COLUMN_TYPES = {
+    "schema_version": "BIGINT", "mirrored_at": "VARCHAR", "trace_id": "VARCHAR",
+    "file_uuid": "VARCHAR", "file_name": "VARCHAR", "s3_uri": "VARCHAR",
+    "external_id": "VARCHAR", "provider": "VARCHAR", "platform": "VARCHAR",
+    "instrument": "VARCHAR", "publish": "BOOLEAN", "file_size": "DOUBLE",
+    "start_time": "VARCHAR", "end_time": "VARCHAR", "created": "VARCHAR",
+    "reviewed": "VARCHAR", "last_updated": "VARCHAR", "data_license": "VARCHAR",
+    "collection_year": "BIGINT", "depth_reference": "VARCHAR",
+    "sounder_draft_m": "DOUBLE", "draft_applied": "BOOLEAN",
+    "sound_speed_documented": "BOOLEAN", "position_offsets_documented": "BOOLEAN",
+    "motion_offsets_applied": "BOOLEAN", "data_processed": "BOOLEAN",
+    "vertical_reduction_reference": "VARCHAR", "vertical_reduction_method": "VARCHAR",
+    "vertical_reduction_model": "VARCHAR", "qualification": "VARCHAR",
+    "eligible_for_direct_fusion": "BOOLEAN", "qualification_reasons_json": "VARCHAR",
+    "geometry_json": "VARCHAR", "metadata_json": "VARCHAR",
+    "other_locations_json": "VARCHAR", "raw_record_json": "VARCHAR",
+}
+
+
+def metadata_columns_sql() -> str:
+    return "{" + ",".join(f"{name}: '{kind}'" for name, kind in METADATA_COLUMN_TYPES.items()) + "}"
 
 
 def utc_now() -> dt.datetime:
@@ -121,6 +142,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     build.add_argument("--root", type=Path, required=True)
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--overwrite", action="store_true")
+    build.add_argument("--incremental-run-id")
+    build.add_argument("--force-full", action="store_true")
 
     join = subparsers.add_parser(
         "join", help="attach slim qualification columns to sounding Parquet"
@@ -148,6 +171,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     add_sync_arguments(daemon)
     daemon.add_argument("--output", type=Path, required=True)
     daemon.add_argument("--interval-seconds", type=int, default=86400)
+    daemon.add_argument("--full-rebuild-interval-seconds", type=int, default=2592000)
 
     return parser.parse_args(argv)
 
@@ -726,9 +750,23 @@ def sync_metadata(
     return manifest
 
 
+def full_build_due(output: Path, interval_seconds: int) -> bool:
+    manifest_path = output / "manifest.json"
+    if not manifest_path.exists():
+        return True
+    manifest = read_json(manifest_path)
+    value = optional_string(manifest.get("last_full_build_at")) or optional_string(manifest.get("built_at"))
+    if not value:
+        return True
+    built = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (utc_now() - built).total_seconds() >= interval_seconds
+
+
 def run_daemon(args: argparse.Namespace) -> None:
     if args.interval_seconds < 60:
         raise ValueError("interval-seconds must be at least 60")
+    if args.full_rebuild_interval_seconds < args.interval_seconds:
+        raise ValueError("full-rebuild-interval-seconds must not be shorter than interval-seconds")
     status_path = args.root / "status.json"
     while True:
         try:
@@ -741,6 +779,11 @@ def run_daemon(args: argparse.Namespace) -> None:
                 timeout_seconds=args.timeout_seconds,
                 retries=args.retries,
             )
+            force_full = (
+                sync_manifest.get("lower_bound") is None
+                or full_build_due(args.output, args.full_rebuild_interval_seconds)
+            )
+            build_mode = "full" if force_full else "incremental"
             atomic_json(
                 status_path,
                 {
@@ -752,10 +795,17 @@ def run_daemon(args: argparse.Namespace) -> None:
                     "total_records": sync_manifest["reported_total_items"],
                     "total_pages": sync_manifest["reported_total_pages"],
                     "completed_pages": sync_manifest["downloaded_pages"],
+                    "build_mode": build_mode,
                     "updated_at": iso_z(utc_now()),
                 },
             )
-            build_manifest = build_parquet(args.root, args.output, overwrite=True)
+            build_manifest = build_parquet(
+                args.root,
+                args.output,
+                overwrite=True,
+                incremental_run_id=None if force_full else sync_manifest["run_id"],
+                force_full=force_full,
+            )
             completed_at = iso_z(utc_now())
             next_run_at = iso_z(utc_now() + dt.timedelta(seconds=args.interval_seconds))
             atomic_json(
@@ -771,6 +821,10 @@ def run_daemon(args: argparse.Namespace) -> None:
                     "completed_pages": sync_manifest["downloaded_pages"],
                     "metadata_records": build_manifest.get("current_trace_records"),
                     "file_index_records": build_manifest.get("file_index_records"),
+                    "build_mode": build_manifest.get("build_mode"),
+                    "affected_years": build_manifest.get("affected_years", []),
+                    "last_full_build_at": build_manifest.get("last_full_build_at"),
+                    "full_rebuild_interval_seconds": args.full_rebuild_interval_seconds,
                     "completed_at": completed_at,
                     "next_run_at": next_run_at,
                     "updated_at": completed_at,
@@ -1014,12 +1068,14 @@ def qualify(
     return "reference_known", reasons
 
 
-def build_parquet(root: Path, output: Path, overwrite: bool = False) -> dict[str, Any]:
+def build_parquet_full(root: Path, output: Path, overwrite: bool = False) -> dict[str, Any]:
     duckdb = load_duckdb()
     page_files = completed_page_files(root)
     if not page_files:
         raise RuntimeError(f"no completed metadata runs below {root}")
-    prepare_output(output, overwrite)
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"output exists: {output}; pass --overwrite")
+    output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp-{os.getpid()}")
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
@@ -1027,9 +1083,10 @@ def build_parquet(root: Path, output: Path, overwrite: bool = False) -> dict[str
     try:
         connection.execute("PRAGMA threads=4")
         connection.execute(
-            """
+            f"""
             CREATE TEMP TABLE metadata_history AS
-            SELECT * FROM read_json_auto(?, format='newline_delimited', union_by_name=true)
+            SELECT * FROM read_json(?, format='newline_delimited', union_by_name=true,
+              columns={metadata_columns_sql()})
             """,
             [[str(path) for path in page_files]],
         )
@@ -1151,9 +1208,13 @@ def build_parquet(root: Path, output: Path, overwrite: bool = False) -> dict[str
                     ),
                 }
             )
+        built_at = iso_z(utc_now())
         manifest = {
             "schema_version": SCHEMA_VERSION,
-            "built_at": iso_z(utc_now()),
+            "built_at": built_at,
+            "last_full_build_at": built_at,
+            "build_mode": "full",
+            "affected_years": [],
             "source_root": str(root.resolve()),
             "page_files": len(page_files),
             **counts,
@@ -1164,8 +1225,237 @@ def build_parquet(root: Path, output: Path, overwrite: bool = False) -> dict[str
         raise
     finally:
         connection.close()
-    os.replace(temporary, output)
+    if output.exists():
+        swap_output(temporary, output)
+    else:
+        os.replace(temporary, output)
     return manifest
+
+
+def completed_run(root: Path, run_id: str) -> tuple[dict[str, Any], list[Path]]:
+    run_dir = root / "runs" / run_id
+    manifest = read_json(run_dir / "manifest.json")
+    if not manifest.get("complete"):
+        raise RuntimeError(f"metadata run is incomplete: {run_id}")
+    pages = sorted((run_dir / "pages").glob("page-*.jsonl.gz"))
+    if len(pages) != manifest.get("downloaded_pages"):
+        raise RuntimeError(f"incomplete page set for {run_id}")
+    return manifest, pages
+
+
+def swap_output(temporary: Path, output: Path) -> None:
+    backup = output.with_name(f".{output.name}.previous-{os.getpid()}")
+    shutil.rmtree(backup, ignore_errors=True)
+    os.replace(output, backup)
+    try:
+        os.replace(temporary, output)
+    except Exception:
+        os.replace(backup, output)
+        raise
+    shutil.rmtree(backup)
+
+
+def build_parquet_incremental(root: Path, output: Path, run_id: str) -> dict[str, Any]:
+    """Apply one completed Crowbar delta by replacing only affected year partitions."""
+    duckdb = load_duckdb()
+    previous_path = output / "manifest.json"
+    if not previous_path.exists():
+        return build_parquet_full(root, output, overwrite=True)
+    previous = read_json(previous_path)
+    run_manifest, delta_pages = completed_run(root, run_id)
+    temporary = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+    shutil.rmtree(temporary, ignore_errors=True)
+    shutil.copytree(output, temporary, copy_function=os.link)
+
+    if int(run_manifest.get("downloaded_records", 0)) == 0:
+        manifest = {
+            **previous,
+            "built_at": iso_z(utc_now()),
+            "build_mode": "incremental",
+            "affected_years": [],
+            "source_run_id": run_id,
+            "page_files": int(previous.get("page_files", 0)) + len(delta_pages),
+            "history_records": int(previous.get("history_records", 0)),
+        }
+        atomic_json(temporary / "manifest.json", manifest)
+        swap_output(temporary, output)
+        return manifest
+
+    connection = duckdb.connect()
+    try:
+        connection.execute("PRAGMA threads=4")
+        records_glob = str(output / "records" / "**" / "*.parquet")
+        index_glob = str(output / "file-index" / "**" / "*.parquet")
+        connection.execute(
+            "CREATE TEMP TABLE existing_records AS SELECT * FROM read_parquet(?, union_by_name=true, hive_partitioning=true)",
+            [records_glob],
+        )
+        connection.execute(
+            "CREATE TEMP TABLE existing_file_index AS SELECT * FROM read_parquet(?, union_by_name=true, hive_partitioning=true)",
+            [index_glob],
+        )
+        connection.execute(
+            f"CREATE TEMP TABLE metadata_delta AS SELECT * FROM read_json(?, format='newline_delimited', union_by_name=true, columns={metadata_columns_sql()})",
+            [[str(path) for path in delta_pages]],
+        )
+        connection.execute(
+            """
+            CREATE TEMP TABLE delta_latest AS
+            SELECT * EXCLUDE (rank) FROM (
+              SELECT *, row_number() OVER (
+                PARTITION BY trace_id ORDER BY try_cast(last_updated AS TIMESTAMPTZ) DESC NULLS LAST,
+                try_cast(mirrored_at AS TIMESTAMPTZ) DESC
+              ) rank
+              FROM metadata_delta
+            ) WHERE rank=1
+            """
+        )
+        connection.execute(
+            """
+            CREATE TEMP TABLE records_updated AS
+            SELECT e.* FROM existing_records e
+            WHERE NOT EXISTS (SELECT 1 FROM delta_latest d WHERE d.trace_id=e.trace_id)
+            UNION ALL BY NAME
+            SELECT * FROM delta_latest
+            """
+        )
+        connection.execute(
+            """
+            CREATE TEMP TABLE affected_file_uuids AS
+            SELECT DISTINCT file_uuid FROM (
+              SELECT file_uuid FROM existing_records e
+              WHERE EXISTS (SELECT 1 FROM delta_latest d WHERE d.trace_id=e.trace_id)
+              UNION ALL
+              SELECT file_uuid FROM delta_latest
+            ) WHERE file_uuid IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
+            CREATE TEMP TABLE metadata_file_index AS
+            SELECT * EXCLUDE (rank) FROM (
+              SELECT *, count(*) OVER (PARTITION BY file_uuid) file_uuid_candidate_count,
+                row_number() OVER (
+                  PARTITION BY file_uuid ORDER BY try_cast(last_updated AS TIMESTAMPTZ) DESC NULLS LAST,
+                  trace_id DESC
+                ) rank
+              FROM records_updated WHERE file_uuid IS NOT NULL
+            ) WHERE rank=1
+            """
+        )
+        years = {
+            int(row[0])
+            for row in connection.execute(
+                """
+                SELECT DISTINCT coalesce(collection_year,0) FROM (
+                  SELECT collection_year FROM existing_records e
+                  WHERE EXISTS (SELECT 1 FROM delta_latest d WHERE d.trace_id=e.trace_id)
+                  UNION ALL SELECT collection_year FROM delta_latest
+                  UNION ALL SELECT collection_year FROM existing_file_index i
+                  WHERE EXISTS (SELECT 1 FROM affected_file_uuids a WHERE a.file_uuid=i.file_uuid)
+                  UNION ALL SELECT collection_year FROM metadata_file_index i
+                  WHERE EXISTS (SELECT 1 FROM affected_file_uuids a WHERE a.file_uuid=i.file_uuid)
+                )
+                """
+            ).fetchall()
+        }
+
+        s3_glob = str(output / "s3-objects" / "**" / "*.parquet")
+        has_s3 = bool(list((output / "s3-objects").glob("collection_year=*/*.parquet")))
+        if has_s3:
+            connection.execute(
+                "CREATE TEMP TABLE s3_objects AS SELECT * FROM read_parquet(?, union_by_name=true, hive_partitioning=true)",
+                [s3_glob],
+            )
+            connection.execute(
+                """
+                CREATE TEMP TABLE s3_reconciliation AS
+                SELECT coalesce(s.file_uuid,m.file_uuid) file_uuid,
+                  coalesce(s.collection_year,m.collection_year) collection_year,
+                  s.key s3_key,s.s3_uri,s.size s3_size,s.last_modified s3_last_modified,
+                  s.etag s3_etag,m.trace_id metadata_trace_id,m.file_name metadata_file_name,
+                  m.last_updated metadata_last_updated,m.qualification metadata_qualification,
+                  m.eligible_for_direct_fusion metadata_direct_fusion,
+                  CASE WHEN s.file_uuid IS NOT NULL AND m.file_uuid IS NOT NULL THEN 'matched'
+                    WHEN s.file_uuid IS NOT NULL THEN 's3_without_metadata'
+                    ELSE 'metadata_without_s3' END reconciliation_status
+                FROM s3_objects s FULL OUTER JOIN metadata_file_index m USING (file_uuid)
+                """
+            )
+            years.update(
+                int(row[0]) for row in connection.execute(
+                    """SELECT DISTINCT coalesce(collection_year,0) FROM s3_reconciliation r
+                    WHERE EXISTS (SELECT 1 FROM affected_file_uuids a WHERE a.file_uuid=r.file_uuid)"""
+                ).fetchall()
+            )
+
+        if years:
+            year_list = ",".join(str(year) for year in sorted(years))
+            for area in ("records", "file-index", "s3-reconciliation"):
+                for year in years:
+                    shutil.rmtree(temporary / area / f"collection_year={year}", ignore_errors=True)
+            connection.execute(
+                f"CREATE TEMP VIEW affected_records AS SELECT * FROM records_updated WHERE coalesce(collection_year,0) IN ({year_list})"
+            )
+            connection.execute(
+                f"CREATE TEMP VIEW affected_file_index AS SELECT * FROM metadata_file_index WHERE coalesce(collection_year,0) IN ({year_list})"
+            )
+            copy_partitioned(connection, "affected_records", temporary / "records")
+            copy_partitioned(connection, "affected_file_index", temporary / "file-index")
+            if has_s3:
+                connection.execute(
+                    f"CREATE TEMP VIEW affected_reconciliation AS SELECT * FROM s3_reconciliation WHERE coalesce(collection_year,0) IN ({year_list})"
+                )
+                copy_partitioned(connection, "affected_reconciliation", temporary / "s3-reconciliation")
+
+        counts = {
+            "history_records": int(previous.get("history_records", 0)) + int(run_manifest.get("downloaded_records", 0)),
+            "current_trace_records": connection.execute("SELECT count(*) FROM records_updated").fetchone()[0],
+            "file_index_records": connection.execute("SELECT count(*) FROM metadata_file_index").fetchone()[0],
+            "missing_file_uuid": connection.execute("SELECT count(*) FROM records_updated WHERE file_uuid IS NULL").fetchone()[0],
+            "qualification_counts": dict(connection.execute(
+                "SELECT qualification,count(*) FROM records_updated GROUP BY qualification"
+            ).fetchall()),
+        }
+        if has_s3:
+            counts.update({
+                "s3_page_files": previous.get("s3_page_files"),
+                "s3_objects": connection.execute("SELECT count(*) FROM s3_objects").fetchone()[0],
+                "s3_reconciliation_counts": dict(connection.execute(
+                    "SELECT reconciliation_status,count(*) FROM s3_reconciliation GROUP BY reconciliation_status"
+                ).fetchall()),
+            })
+        manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "built_at": iso_z(utc_now()),
+            "last_full_build_at": previous.get("last_full_build_at", previous.get("built_at")),
+            "build_mode": "incremental",
+            "affected_years": sorted(years),
+            "source_run_id": run_id,
+            "source_root": str(root.resolve()),
+            "page_files": int(previous.get("page_files", 0)) + len(delta_pages),
+            **counts,
+        }
+        atomic_json(temporary / "manifest.json", manifest)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    finally:
+        connection.close()
+    swap_output(temporary, output)
+    return manifest
+
+
+def build_parquet(
+    root: Path,
+    output: Path,
+    overwrite: bool = False,
+    incremental_run_id: str | None = None,
+    force_full: bool = False,
+) -> dict[str, Any]:
+    if force_full or incremental_run_id is None or not (output / "manifest.json").exists():
+        return build_parquet_full(root, output, overwrite=overwrite or force_full)
+    return build_parquet_incremental(root, output, incremental_run_id)
 
 
 def copy_partitioned(connection: Any, table: str, output: Path) -> None:
@@ -1850,7 +2140,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(s3_manifest, indent=2, sort_keys=True))
     if args.command in {"build", "run"}:
-        manifest = build_parquet(args.root, args.output, args.overwrite)
+        manifest = build_parquet(
+            args.root,
+            args.output,
+            args.overwrite,
+            incremental_run_id=getattr(args, "incremental_run_id", None),
+            force_full=getattr(args, "force_full", False),
+        )
         print(json.dumps(manifest, indent=2, sort_keys=True))
         return 0
     if args.command == "join":
