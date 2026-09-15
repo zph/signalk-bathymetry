@@ -7,8 +7,9 @@ const MVT_EXTENT = 4096
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686
 const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
+const MAX_TRACK_VERTICES = 6_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-mvt3'
+export const NOAA_CSB_MVT_REVISION = 'csb-mvt4'
 
 export interface RenderedCsbTile {
   tile: Buffer
@@ -85,7 +86,7 @@ export class NoaaCsbTileRenderer {
     })
     return {
       tile: Buffer.concat([encodeSoundingPointTile(features),
-        encodeTrackLineTile(trackLines(soundings, bounds)),
+        encodeTrackLineTile(buildTrackLines(soundings, bounds, z)),
         encodeDepthContourTile(observedContours(soundings,z,x,y))]),
       soundingCount: soundings.length,
       pointCount: features.length,
@@ -94,13 +95,17 @@ export class NoaaCsbTileRenderer {
   }
 }
 
-function trackLines(
+export function buildTrackLines(
   soundings: readonly CsbSounding[],
-  bounds: ReturnType<typeof tileMercatorBounds>
+  bounds: ReturnType<typeof tileMercatorBounds>,
+  zoom: number
 ) {
   const span = bounds.maxX - bounds.minX
   const journeys = new Map<string, CsbSounding[]>()
   for (const sounding of soundings) {
+    // An archive aggregate can represent multiple source files. Never connect those unrelated
+    // cells into an invented journey line merely because their identity was intentionally blanked.
+    if (!sounding.uniqueId || !sounding.fileUuid) continue
     const key = `${sounding.uniqueId}\u0000${sounding.fileUuid}`
     const journey = journeys.get(key)
     if (journey) journey.push(sounding)
@@ -110,7 +115,9 @@ function trackLines(
     properties: Record<string, string | number | boolean>
     line: Array<{ x: number; y: number }>
   }> = []
-  const minimumStep = (MVT_EXTENT / 256) * 1.5
+  const baseScreenStep = zoom <= 14 ? 4 : zoom <= 16 ? 3 : 2
+  const densityScale = Math.max(1, Math.sqrt(soundings.length / MAX_TRACK_VERTICES))
+  const minimumStep = (MVT_EXTENT / 256) * baseScreenStep * densityScale
   const flush = (line: Array<{ x: number; y: number }>) => {
     if (line.length >= 2) features.push({ properties: { CSB_NOT_FOR_NAVIGATION: true }, line })
   }
@@ -146,7 +153,45 @@ function trackLines(
     }
     finishLine()
   }
-  return features
+  return limitTrackVertices(features)
+}
+
+function limitTrackVertices<T extends { line: Array<{ x: number; y: number }> }>(features: T[]): T[] {
+  const total = features.reduce((sum, feature) => sum + feature.line.length, 0)
+  if (total <= MAX_TRACK_VERTICES) return features
+  const stride = Math.ceil(total / MAX_TRACK_VERTICES)
+  const simplified = features.map((feature) => {
+    if (feature.line.length <= 2) return feature
+    const line = feature.line.filter((_, index) => index === 0 || index % stride === 0)
+    const last = feature.line.at(-1)!
+    if (line.at(-1) !== last) line.push(last)
+    return { ...feature, line }
+  })
+  if (simplified.reduce((sum, feature) => sum + feature.line.length, 0) <= MAX_TRACK_VERTICES) {
+    return simplified
+  }
+  // A pathological tile can contain thousands of two-point journeys that cannot be simplified.
+  // Retain the longest visible journeys first instead of sending an unbounded tile to the GPU.
+  return simplified
+    .map((feature) => ({ feature, length: lineLength(feature.line) }))
+    .sort((left, right) => right.length - left.length)
+    .reduce<{ features: T[]; vertices: number }>((result, entry) => {
+      if (result.vertices + entry.feature.line.length <= MAX_TRACK_VERTICES) {
+        result.features.push(entry.feature)
+        result.vertices += entry.feature.line.length
+      }
+      return result
+    }, { features: [], vertices: 0 }).features
+}
+
+function lineLength(line: Array<{ x: number; y: number }>): number {
+  let length = 0
+  for (let index = 1; index < line.length; index += 1) {
+    const previous = line[index - 1]!
+    const point = line[index]!
+    length += Math.hypot(point.x - previous.x, point.y - previous.y)
+  }
+  return length
 }
 
 function aggregateSoundings(soundings: readonly CsbSounding[], cellMeters: number): Aggregate[] {

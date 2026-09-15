@@ -10,8 +10,9 @@ import {
   parseCsbCsv,
   type CsbFileMetadata
 } from '../src/noaa-csb'
-import { NoaaCsbTileRenderer } from '../src/noaa-csb-tiles'
+import { buildTrackLines, NoaaCsbTileRenderer } from '../src/noaa-csb-tiles'
 import { encodeSoundingPointTile } from '../src/vector-tiles'
+import { tileMercatorBounds } from '../src/geo'
 
 test('labels select shallowest neighbors and reveal more observations as zoom increases', () => {
   const points = Array.from({length:12},(_,i) => ({uniqueId:String(i),fileUuid:'f',
@@ -54,6 +55,44 @@ test('detailed tiles include screen-simplified journey lines', () => {
     points.map((_, index) => ({ point: { x: index % 4096, y: index % 2048 }, properties: {} }))
   )
   assert.ok(rendered.tile.length < rawPoints.length / 2)
+})
+
+test('dense journey lines use a bounded, zoom-adaptive vertex budget', () => {
+  const tile = tileForPosition(-122.45, 37.75, 14)
+  const bounds = tileMercatorBounds(14, tile.x, tile.y)
+  const points = Array.from({ length: 40_000 }, (_, index) => ({
+    uniqueId: 'vessel',
+    fileUuid: 'journey',
+    longitude: -122.45 + index * 0.00000005,
+    latitude: 37.75 + Math.sin(index / 20) * 0.00001,
+    depthM: 12,
+    observedAtMs: 1_700_000_000_000 + index * 100,
+    platform: 'test',
+    provider: 'test',
+    instrument: 'test'
+  }))
+  const midZoom = buildTrackLines(points, bounds, 14)
+  const closeZoom = buildTrackLines(points, bounds, 18)
+  assert.ok(midZoom.reduce((sum, feature) => sum + feature.line.length, 0) <= 6_000)
+  assert.ok(closeZoom.reduce((sum, feature) => sum + feature.line.length, 0) <= 6_000)
+  assert.ok(midZoom[0]!.line.length < closeZoom[0]!.line.length)
+})
+
+test('track lines never connect anonymous mixed-file aggregates', () => {
+  const tile = tileForPosition(-122.45, 37.75, 14)
+  const bounds = tileMercatorBounds(14, tile.x, tile.y)
+  const aggregate = (index: number) => ({
+    uniqueId: 'vessel',
+    fileUuid: '',
+    longitude: -122.45 + index * 0.0001,
+    latitude: 37.75,
+    depthM: 12,
+    observedAtMs: 1_700_000_000_000 + index * 1000,
+    platform: 'test',
+    provider: 'test',
+    instrument: 'test'
+  })
+  assert.deepEqual(buildTrackLines([aggregate(0), aggregate(1)], bounds, 14), [])
 })
 
 test('dense sounding tiles do not exceed the JavaScript argument stack', () => {
