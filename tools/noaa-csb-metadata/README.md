@@ -65,6 +65,9 @@ python tools/noaa-csb-metadata/pipeline.py sync \
 python tools/noaa-csb-metadata/pipeline.py sync-s3 \
   --root /data/noaa-csb-metadata/mirror
 
+python tools/noaa-csb-metadata/pipeline.py sync-s3-sharded \
+  --root /data/noaa-csb-metadata/mirror --workers 6
+
 python tools/noaa-csb-metadata/pipeline.py build \
   --root /data/noaa-csb-metadata/mirror \
   --output /data/noaa-csb-metadata/parquet
@@ -77,9 +80,35 @@ full reconciliation. `--max-pages` exists for testing and never advances the
 watermark unless it happens to cover the whole response.
 
 The S3 crawl uses unauthenticated `ListObjectsV2`, follows continuation tokens,
-and checkpoints every 1,000-object page. It is a full inventory rather than an
-incremental metadata source. `run --inventory-s3` performs both crawls before
-building Parquet.
+and checkpoints every 1,000-object page. `sync-s3-sharded` first discovers the
+published year prefixes, then inventories those nonoverlapping prefixes in
+parallel. The combined manifest records the exact object count and source byte
+total. Rerunning resumes partial shards and reuses completed shards; pass
+`--refresh` to take a new snapshot. `run --inventory-s3` retains the slower
+single-prefix mode for simple scheduled refreshes.
+
+## Archive all published soundings
+
+After a complete S3 inventory, create the lossless compressed sounding archive:
+
+```sh
+python tools/noaa-csb-metadata/pipeline.py mirror-soundings \
+  --inventory-root /data/noaa-csb-metadata/mirror \
+  --output /data/noaa-csb-metadata/soundings \
+  --workers 4
+```
+
+This downloader is resumable at the pack level. It verifies every download
+against the published byte size and verifies single-part S3 ETags as MD5. Each
+Parquet pack has a SHA-256 sidecar. The archive retains the exact text value of
+all eight published CSV columns plus the source object key, ETag, modification
+time, size, and SHA-256. No coordinate, depth, or timestamp value is rounded.
+
+Packs target 256 MiB of source CSV and at most 250 source objects. A 50 GiB free
+space reserve is enforced by default. For a storage benchmark before a global
+run, use `--max-raw-bytes 1073741824`; a limited run is marked incomplete in
+its manifest. Production and benchmark outputs should use different output
+directories.
 
 To attach the compact qualification fields to an existing sounding dataset:
 
@@ -98,8 +127,13 @@ in the keyed metadata catalog.
 
 ```sh
 cd tools/noaa-csb-metadata
+NOAA_CSB_DATA_DIR=/srv/noaa-csb-metadata podman compose run --rm noaa-csb-inventory
 NOAA_CSB_DATA_DIR=/srv/noaa-csb-metadata podman compose run --rm noaa-csb-metadata
+NOAA_CSB_DATA_DIR=/srv/noaa-csb-metadata podman compose run --rm noaa-csb-soundings
 ```
 
-The compose job performs an incremental sync and atomically replaces the
-derived Parquet catalog. Interrupted downloads remain resumable in the mirror.
+The inventory job records the exact public object count and source size. The
+metadata job performs an incremental Crowbar sync and atomically replaces the
+derived catalog. The soundings job downloads and packs all inventoried CSVs.
+Interrupted work remains resumable, and successful packs are checksum-verified
+before reuse.

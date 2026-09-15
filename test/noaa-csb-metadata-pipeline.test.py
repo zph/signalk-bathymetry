@@ -1,9 +1,11 @@
 import gzip
 import importlib.util
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 MODULE_PATH = (
@@ -197,6 +199,102 @@ class ParquetBuildTest(unittest.TestCase):
                 [str(joined / "enriched.parquet")],
             ).fetchone()
             self.assertEqual(result[0], "datum_correctable")
+
+    def test_sharded_inventory_is_combined_for_build_and_mirror(self):
+        try:
+            import duckdb
+        except ImportError:
+            self.skipTest("duckdb is not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "inventory"
+            source_files = Path(directory) / "sources"
+            source_files.mkdir()
+            shards = []
+            source_by_key = {}
+            for year in (2024, 2025):
+                shard_root = root / "s3-shards" / f"{year}-test"
+                run = shard_root / "s3-runs" / "run-1"
+                pages = run / "pages"
+                pages.mkdir(parents=True)
+                key = f"csb/csv/{year}/01/01/{year}0101_boat_pointData.csv"
+                source = source_files / f"{year}.csv"
+                source.write_text(
+                    "UNIQUE_ID,FILE_UUID,LON,LAT,DEPTH,TIME,PLATFORM_NAME,PROVIDER\n"
+                    f"boat,{year}0101_boat,-122.1,37.2,4.56,{year}-01-01T00:00:00Z,TEST,unit\n",
+                    encoding="utf-8",
+                )
+                source_by_key[key] = source
+                row = {
+                    "schema_version": 1,
+                    "key": key,
+                    "s3_uri": f"s3://bucket/{key}",
+                    "file_uuid": f"{year}0101_boat",
+                    "size": source.stat().st_size,
+                    "last_modified": "2026-09-01T00:00:00Z",
+                    "etag": None,
+                    "storage_class": "STANDARD",
+                    "collection_year": year,
+                }
+                with gzip.open(
+                    pages / "page-0000001.jsonl.gz", "wt", encoding="utf-8"
+                ) as handle:
+                    handle.write(json.dumps(row) + "\n")
+                (run / "manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "complete": True,
+                            "completed_at": "2026-09-15T00:00:00Z",
+                            "downloaded_pages": 1,
+                            "downloaded_objects": 1,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                shards.append(
+                    {
+                        "prefix": f"csb/csv/{year}/",
+                        "root": f"s3-shards/{year}-test",
+                        "manifest": {"complete": True},
+                    }
+                )
+            (root / "s3-shards-manifest.json").write_text(
+                json.dumps({"complete": True, "shards": shards}), encoding="utf-8"
+            )
+            self.assertEqual(len(PIPELINE.latest_completed_s3_page_files(root)), 2)
+
+            def fake_download(row, destination, *_args, **_kwargs):
+                source = source_by_key[row["key"]]
+                shutil.copyfile(source, destination)
+                return {
+                    "local_path": str(destination),
+                    "key": row["key"],
+                    "etag": row["etag"],
+                    "last_modified": row["last_modified"],
+                    "size": source.stat().st_size,
+                    "source_sha256": PIPELINE.sha256_file(source),
+                }
+
+            output = Path(directory) / "soundings"
+            with mock.patch.object(PIPELINE, "download_s3_object", fake_download):
+                manifest = PIPELINE.mirror_soundings(
+                    root,
+                    output,
+                    workers=2,
+                    target_pack_bytes=1,
+                    max_pack_objects=1,
+                    min_free_bytes=0,
+                )
+            self.assertTrue(manifest["complete"])
+            self.assertEqual(manifest["source_objects"], 2)
+            self.assertEqual(manifest["soundings"], 2)
+            values = duckdb.connect().execute(
+                "SELECT file_uuid, depth FROM read_parquet(?) ORDER BY file_uuid",
+                [str(output / "soundings" / "**" / "*.parquet")],
+            ).fetchall()
+            self.assertEqual(
+                values,
+                [("20240101_boat", "4.56"), ("20250101_boat", "4.56")],
+            )
 
 
 if __name__ == "__main__":

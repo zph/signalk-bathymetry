@@ -1,4 +1,18 @@
 services:
+  noaa-csb-inventory:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command:
+      - sync-s3-sharded
+      - --root
+      - /data/mirror
+      - --workers
+      - "6"
+    volumes:
+      - ${NOAA_CSB_DATA_DIR:-./data}:/data
+    restart: "no"
+
   noaa-csb-metadata:
     build:
       context: .
@@ -11,8 +25,23 @@ services:
       - /data/parquet
       - --workers
       - "4"
-      - --inventory-s3
       - --overwrite
+    volumes:
+      - ${NOAA_CSB_DATA_DIR:-./data}:/data
+    restart: "no"
+
+  noaa-csb-soundings:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command:
+      - mirror-soundings
+      - --inventory-root
+      - /data/mirror
+      - --output
+      - /data/soundings
+      - --workers
+      - "4"
     volumes:
       - ${NOAA_CSB_DATA_DIR:-./data}:/data
     restart: "no"

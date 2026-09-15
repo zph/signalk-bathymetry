@@ -12,6 +12,7 @@ import argparse
 import concurrent.futures
 import datetime as dt
 import gzip
+import hashlib
 import json
 import os
 import random
@@ -75,6 +76,46 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     sync_s3.add_argument("--max-pages", type=int)
     sync_s3.add_argument("--timeout-seconds", type=float, default=60)
     sync_s3.add_argument("--retries", type=int, default=6)
+
+    sync_s3_sharded = subparsers.add_parser(
+        "sync-s3-sharded",
+        help="inventory NOAA CSB S3 objects in parallel by published year prefix",
+    )
+    sync_s3_sharded.add_argument("--root", type=Path, required=True)
+    sync_s3_sharded.add_argument("--list-url", default=DEFAULT_S3_LIST_URL)
+    sync_s3_sharded.add_argument("--prefix", default=DEFAULT_S3_PREFIX)
+    sync_s3_sharded.add_argument("--workers", type=int, default=6)
+    sync_s3_sharded.add_argument("--max-pages", type=int)
+    sync_s3_sharded.add_argument("--timeout-seconds", type=float, default=60)
+    sync_s3_sharded.add_argument("--retries", type=int, default=6)
+    sync_s3_sharded.add_argument(
+        "--refresh",
+        action="store_true",
+        help="start a new inventory even when a complete shard inventory exists",
+    )
+
+    mirror_soundings = subparsers.add_parser(
+        "mirror-soundings",
+        help="download every inventoried CSB CSV into checksummed lossless Parquet packs",
+    )
+    mirror_soundings.add_argument("--inventory-root", type=Path, required=True)
+    mirror_soundings.add_argument("--output", type=Path, required=True)
+    mirror_soundings.add_argument("--list-url", default=DEFAULT_S3_LIST_URL)
+    mirror_soundings.add_argument("--workers", type=int, default=4)
+    mirror_soundings.add_argument(
+        "--target-pack-bytes", type=int, default=256 * 1024 * 1024
+    )
+    mirror_soundings.add_argument("--max-pack-objects", type=int, default=250)
+    mirror_soundings.add_argument("--max-objects", type=int)
+    mirror_soundings.add_argument("--max-raw-bytes", type=int)
+    mirror_soundings.add_argument(
+        "--min-free-bytes",
+        type=int,
+        default=50 * 1024 * 1024 * 1024,
+        help="stop before free storage falls below this reserve",
+    )
+    mirror_soundings.add_argument("--timeout-seconds", type=float, default=120)
+    mirror_soundings.add_argument("--retries", type=int, default=6)
 
     build = subparsers.add_parser("build", help="build partitioned metadata Parquet")
     build.add_argument("--root", type=Path, required=True)
@@ -216,6 +257,47 @@ def s3_request_url(list_url: str, prefix: str, continuation_token: str | None) -
         parameters["continuation-token"] = continuation_token
     separator = "&" if "?" in list_url else "?"
     return f"{list_url}{separator}{urllib.parse.urlencode(parameters)}"
+
+
+def s3_prefix_request_url(list_url: str, prefix: str) -> str:
+    parameters = {
+        "list-type": "2",
+        "prefix": prefix,
+        "delimiter": "/",
+        "max-keys": str(S3_PAGE_SIZE),
+    }
+    separator = "&" if "?" in list_url else "?"
+    return f"{list_url}{separator}{urllib.parse.urlencode(parameters)}"
+
+
+def discover_s3_prefixes(
+    list_url: str,
+    prefix: str,
+    timeout_seconds: float,
+    retries: int,
+) -> list[str]:
+    url = s3_prefix_request_url(list_url, prefix)
+    for attempt in range(retries + 1):
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "signalk-bathymetry-noaa-s3-inventory/1"},
+            )
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                document = ET.parse(response).getroot()
+            prefixes = [
+                required_string(xml_text(node, "Prefix"), "S3 common prefix")
+                for node in xml_children(document, "CommonPrefixes")
+            ]
+            if not prefixes:
+                raise ValueError(f"S3 listing returned no child prefixes below {prefix}")
+            return sorted(prefixes)
+        except (urllib.error.URLError, TimeoutError, ET.ParseError, ValueError) as error:
+            if attempt >= retries:
+                raise RuntimeError(f"NOAA S3 prefix discovery failed: {error}") from error
+            delay = min(60.0, 0.75 * (2**attempt)) + random.random() * 0.5
+            time.sleep(delay)
+    raise AssertionError("retry loop exhausted")
 
 
 def fetch_s3_page(
@@ -386,6 +468,116 @@ def sync_s3_inventory(
     else:
         print("S3 inventory paused and remains resumable.", file=sys.stderr)
     return manifest
+
+
+def latest_complete_s3_manifest(root: Path) -> tuple[Path, dict[str, Any]] | None:
+    completed: list[tuple[str, Path, dict[str, Any]]] = []
+    for manifest_path in sorted((root / "s3-runs").glob("*/manifest.json")):
+        manifest = read_json(manifest_path)
+        if manifest.get("complete"):
+            completed.append(
+                (optional_string(manifest.get("completed_at")) or "", manifest_path, manifest)
+            )
+    if not completed:
+        return None
+    _, path, manifest = max(completed, key=lambda entry: (entry[0], str(entry[1])))
+    return path, manifest
+
+
+def s3_shard_id(prefix: str) -> str:
+    leaf = prefix.rstrip("/").rsplit("/", 1)[-1]
+    safe_leaf = "".join(character for character in leaf if character.isalnum() or character in "-_")
+    digest = hashlib.sha256(prefix.encode("utf-8")).hexdigest()[:12]
+    return f"{safe_leaf or 'prefix'}-{digest}"
+
+
+def sync_s3_sharded_inventory(
+    root: Path,
+    list_url: str = DEFAULT_S3_LIST_URL,
+    prefix: str = DEFAULT_S3_PREFIX,
+    workers: int = 6,
+    max_pages: int | None = None,
+    timeout_seconds: float = 60,
+    retries: int = 6,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    if workers < 1 or workers > 32:
+        raise ValueError("workers must be between 1 and 32")
+    prefixes = discover_s3_prefixes(list_url, prefix, timeout_seconds, retries)
+    root.mkdir(parents=True, exist_ok=True)
+    shards_root = root / "s3-shards"
+    shards_root.mkdir(parents=True, exist_ok=True)
+
+    def inventory(child_prefix: str) -> dict[str, Any]:
+        shard_root = shards_root / s3_shard_id(child_prefix)
+        existing = latest_complete_s3_manifest(shard_root)
+        if existing is not None and not refresh:
+            result = dict(existing[1])
+        else:
+            result = sync_s3_inventory(
+                shard_root,
+                list_url=list_url,
+                prefix=child_prefix,
+                max_pages=max_pages,
+                timeout_seconds=timeout_seconds,
+                retries=retries,
+            )
+        return {
+            "prefix": child_prefix,
+            "root": str(shard_root.relative_to(root)),
+            "manifest": result,
+        }
+
+    shards: list[dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(inventory, child): child for child in prefixes}
+        for future in concurrent.futures.as_completed(futures):
+            child = futures[future]
+            shard = future.result()
+            shards.append(shard)
+            print(
+                f"NOAA S3 shard {child}: "
+                f"{shard['manifest'].get('downloaded_objects', 0)} objects",
+                flush=True,
+            )
+
+    shards.sort(key=lambda item: item["prefix"])
+    complete = all(bool(item["manifest"].get("complete")) for item in shards)
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "list_url": list_url,
+        "prefix": prefix,
+        "shards": shards,
+        "downloaded_objects": sum(
+            int(item["manifest"].get("downloaded_objects", 0)) for item in shards
+        ),
+        "downloaded_pages": sum(
+            int(item["manifest"].get("downloaded_pages", 0)) for item in shards
+        ),
+        "raw_bytes": sum(
+            s3_inventory_raw_bytes(root / item["root"]) for item in shards
+        ),
+        "complete": complete,
+        "completed_at": iso_z(utc_now()) if complete else None,
+    }
+    atomic_json(root / "s3-shards-manifest.json", manifest)
+    return manifest
+
+
+def s3_inventory_raw_bytes(root: Path) -> int:
+    total = 0
+    latest = latest_complete_s3_manifest(root)
+    if latest is None:
+        manifests = sorted((root / "s3-runs").glob("*/manifest.json"))
+        if not manifests:
+            return 0
+        manifest_path = manifests[-1]
+    else:
+        manifest_path = latest[0]
+    for page in sorted((manifest_path.parent / "pages").glob("page-*.jsonl.gz")):
+        for row in read_jsonl_gzip(page):
+            total += int(row.get("size", 0))
+    return total
 
 
 def sync_metadata(
@@ -976,20 +1168,394 @@ def completed_page_files(root: Path) -> list[Path]:
 
 
 def latest_completed_s3_page_files(root: Path) -> list[Path]:
-    completed: list[tuple[str, Path, dict[str, Any]]] = []
-    for manifest_path in sorted((root / "s3-runs").glob("*/manifest.json")):
-        manifest = read_json(manifest_path)
-        if manifest.get("complete"):
-            completed.append(
-                (optional_string(manifest.get("completed_at")) or "", manifest_path, manifest)
-            )
-    if not completed:
+    shard_manifest_path = root / "s3-shards-manifest.json"
+    if shard_manifest_path.exists():
+        shard_manifest = read_json(shard_manifest_path)
+        if not shard_manifest.get("complete"):
+            return []
+        pages: list[Path] = []
+        for shard in shard_manifest.get("shards", []):
+            if not isinstance(shard, dict):
+                raise ValueError("invalid S3 shard manifest entry")
+            shard_root = root / required_string(shard.get("root"), "S3 shard root")
+            shard_pages = latest_completed_s3_page_files(shard_root)
+            if not shard_pages:
+                raise RuntimeError(f"complete S3 shard has no pages: {shard_root}")
+            pages.extend(shard_pages)
+        return pages
+
+    latest = latest_complete_s3_manifest(root)
+    if latest is None:
         return []
-    _, manifest_path, manifest = max(completed, key=lambda entry: (entry[0], str(entry[1])))
+    manifest_path, manifest = latest
     pages = sorted((manifest_path.parent / "pages").glob("page-*.jsonl.gz"))
     if len(pages) != manifest.get("downloaded_pages"):
         raise RuntimeError(f"incomplete S3 page set for {manifest_path.parent.name}")
     return pages
+
+
+def read_jsonl_gzip(path: Path) -> Iterable[dict[str, Any]]:
+    with gzip.open(path, mode="rt", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError(f"expected object at {path}:{line_number}")
+            yield value
+
+
+def inventory_packs(
+    page_files: Sequence[Path],
+    target_pack_bytes: int,
+    max_pack_objects: int,
+    max_objects: int | None = None,
+    max_raw_bytes: int | None = None,
+) -> Iterable[list[dict[str, Any]]]:
+    if target_pack_bytes < 1 or max_pack_objects < 1:
+        raise ValueError("pack byte and object limits must be positive")
+    selected_objects = 0
+    selected_bytes = 0
+    pack: list[dict[str, Any]] = []
+    pack_bytes = 0
+    for page in page_files:
+        for row in read_jsonl_gzip(page):
+            size = int(row.get("size", 0))
+            if max_objects is not None and selected_objects >= max_objects:
+                if pack:
+                    yield pack
+                return
+            if max_raw_bytes is not None and selected_bytes >= max_raw_bytes:
+                if pack:
+                    yield pack
+                return
+            if pack and (
+                len(pack) >= max_pack_objects
+                or pack_bytes + size > target_pack_bytes
+            ):
+                yield pack
+                pack = []
+                pack_bytes = 0
+            pack.append(row)
+            pack_bytes += size
+            selected_objects += 1
+            selected_bytes += size
+    if pack:
+        yield pack
+
+
+def pack_id(rows: Sequence[Mapping[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(required_string(row.get("key"), "S3 object key").encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((optional_string(row.get("etag")) or "").encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(int(row.get("size", 0))).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()[:24]
+
+
+def object_download_url(list_url: str, key: str) -> str:
+    base = list_url.split("?", 1)[0].rstrip("/") + "/"
+    return base + urllib.parse.quote(key, safe="/")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def download_s3_object(
+    row: Mapping[str, Any],
+    destination: Path,
+    list_url: str,
+    timeout_seconds: float,
+    retries: int,
+) -> dict[str, Any]:
+    key = required_string(row.get("key"), "S3 object key")
+    expected_size = int(row.get("size", 0))
+    expected_etag = optional_string(row.get("etag"))
+    url = object_download_url(list_url, key)
+    for attempt in range(retries + 1):
+        temporary = destination.with_suffix(destination.suffix + ".part")
+        temporary.unlink(missing_ok=True)
+        md5 = hashlib.md5(usedforsecurity=False)
+        sha256 = hashlib.sha256()
+        byte_count = 0
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "signalk-bathymetry-noaa-sounding-archive/1"},
+            )
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                with temporary.open("wb") as output:
+                    while True:
+                        block = response.read(1024 * 1024)
+                        if not block:
+                            break
+                        output.write(block)
+                        md5.update(block)
+                        sha256.update(block)
+                        byte_count += len(block)
+            if byte_count != expected_size:
+                raise ValueError(
+                    f"size mismatch for {key}: expected {expected_size}, received {byte_count}"
+                )
+            if (
+                expected_etag
+                and "-" not in expected_etag
+                and len(expected_etag) == 32
+                and md5.hexdigest().lower() != expected_etag.lower()
+            ):
+                raise ValueError(f"ETag mismatch for {key}")
+            os.replace(temporary, destination)
+            return {
+                "local_path": str(destination),
+                "key": key,
+                "etag": expected_etag,
+                "last_modified": optional_string(row.get("last_modified")),
+                "size": byte_count,
+                "source_sha256": sha256.hexdigest(),
+            }
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+            temporary.unlink(missing_ok=True)
+            if attempt >= retries:
+                raise RuntimeError(f"NOAA sounding download failed for {key}: {error}") from error
+            delay = min(60.0, 0.75 * (2**attempt)) + random.random() * 0.5
+            time.sleep(delay)
+    raise AssertionError("retry loop exhausted")
+
+
+def write_sounding_pack(
+    rows: Sequence[Mapping[str, Any]],
+    output: Path,
+    list_url: str,
+    timeout_seconds: float,
+    retries: int,
+    min_free_bytes: int,
+) -> dict[str, Any]:
+    identifier = pack_id(rows)
+    years = {row.get("collection_year") for row in rows}
+    year = next(iter(years)) if len(years) == 1 else None
+    year_directory = f"collection_year={year if year is not None else 'unknown'}"
+    destination_dir = output / "soundings" / year_directory
+    destination = destination_dir / f"part-{identifier}.parquet"
+    sidecar = destination.with_suffix(".manifest.json")
+    if destination.exists() and sidecar.exists():
+        manifest = read_json(sidecar)
+        if manifest.get("source_fingerprint") != identifier:
+            raise RuntimeError(f"sounding pack fingerprint mismatch: {destination}")
+        if manifest.get("parquet_sha256") != sha256_file(destination):
+            raise RuntimeError(f"sounding pack checksum mismatch: {destination}")
+        return {**manifest, "reused": True}
+    if destination.exists() or sidecar.exists():
+        raise RuntimeError(f"incomplete sounding pack output requires inspection: {destination}")
+
+    raw_bytes = sum(int(row.get("size", 0)) for row in rows)
+    output.mkdir(parents=True, exist_ok=True)
+    free_bytes = shutil.disk_usage(output).free
+    if free_bytes - raw_bytes < min_free_bytes:
+        raise RuntimeError(
+            f"storage reserve would be breached: {free_bytes} bytes free, "
+            f"{raw_bytes} bytes needed temporarily, {min_free_bytes} bytes reserved"
+        )
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    work_root = output / ".work"
+    work_root.mkdir(parents=True, exist_ok=True)
+    temporary_dir = Path(tempfile.mkdtemp(prefix=f"pack-{identifier}-", dir=work_root))
+    temporary_output = temporary_dir / "soundings.parquet"
+    connection = None
+    try:
+        downloads = []
+        for index, row in enumerate(rows):
+            local = temporary_dir / f"source-{index:04d}.csv"
+            downloads.append(
+                download_s3_object(
+                    row, local, list_url, timeout_seconds=timeout_seconds, retries=retries
+                )
+            )
+        duckdb = load_duckdb()
+        connection = duckdb.connect()
+        connection.execute("PRAGMA threads=2")
+        connection.execute(
+            """
+            CREATE TEMP TABLE source_manifest(
+              local_path VARCHAR, source_key VARCHAR, source_etag VARCHAR,
+              source_last_modified VARCHAR, source_size UBIGINT, source_sha256 VARCHAR
+            )
+            """
+        )
+        connection.executemany(
+            "INSERT INTO source_manifest VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    item["local_path"],
+                    item["key"],
+                    item["etag"],
+                    item["last_modified"],
+                    item["size"],
+                    item["source_sha256"],
+                )
+                for item in downloads
+            ],
+        )
+        paths = [item["local_path"] for item in downloads]
+        quoted_output = sql_literal(str(temporary_output))
+        connection.execute(
+            f"""
+            COPY (
+              SELECT
+                r.UNIQUE_ID unique_id,
+                r.FILE_UUID file_uuid,
+                r.LON lon,
+                r.LAT lat,
+                r.DEPTH depth,
+                r.TIME "time",
+                r.PLATFORM_NAME platform_name,
+                r.PROVIDER provider,
+                m.source_key,
+                m.source_etag,
+                m.source_last_modified,
+                m.source_size,
+                m.source_sha256
+              FROM read_csv(
+                ?, header=true, all_varchar=true, filename=true,
+                columns={{
+                  'UNIQUE_ID': 'VARCHAR', 'FILE_UUID': 'VARCHAR',
+                  'LON': 'VARCHAR', 'LAT': 'VARCHAR', 'DEPTH': 'VARCHAR',
+                  'TIME': 'VARCHAR', 'PLATFORM_NAME': 'VARCHAR', 'PROVIDER': 'VARCHAR'
+                }}
+              ) r
+              JOIN source_manifest m ON r.filename = m.local_path
+            ) TO {quoted_output}
+            (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 250000)
+            """,
+            [paths],
+        )
+        sounding_count = int(
+            connection.execute(
+                "SELECT count(*) FROM read_parquet(?)", [str(temporary_output)]
+            ).fetchone()[0]
+        )
+        parquet_bytes = temporary_output.stat().st_size
+        manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "source_fingerprint": identifier,
+            "source_objects": len(rows),
+            "source_bytes": raw_bytes,
+            "soundings": sounding_count,
+            "parquet_bytes": parquet_bytes,
+            "parquet_sha256": sha256_file(temporary_output),
+            "created_at": iso_z(utc_now()),
+            "first_key": required_string(rows[0].get("key"), "first S3 key"),
+            "last_key": required_string(rows[-1].get("key"), "last S3 key"),
+        }
+        os.replace(temporary_output, destination)
+        atomic_json(sidecar, manifest)
+        return {**manifest, "reused": False}
+    finally:
+        if connection is not None:
+            connection.close()
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+
+
+def mirror_soundings(
+    inventory_root: Path,
+    output: Path,
+    list_url: str = DEFAULT_S3_LIST_URL,
+    workers: int = 4,
+    target_pack_bytes: int = 256 * 1024 * 1024,
+    max_pack_objects: int = 250,
+    max_objects: int | None = None,
+    max_raw_bytes: int | None = None,
+    min_free_bytes: int = 50 * 1024 * 1024 * 1024,
+    timeout_seconds: float = 120,
+    retries: int = 6,
+) -> dict[str, Any]:
+    if workers < 1 or workers > 16:
+        raise ValueError("workers must be between 1 and 16")
+    page_files = latest_completed_s3_page_files(inventory_root)
+    if not page_files:
+        raise RuntimeError(f"no complete S3 inventory below {inventory_root}")
+    output.mkdir(parents=True, exist_ok=True)
+    packs = inventory_packs(
+        page_files,
+        target_pack_bytes=target_pack_bytes,
+        max_pack_objects=max_pack_objects,
+        max_objects=max_objects,
+        max_raw_bytes=max_raw_bytes,
+    )
+    totals = {
+        "source_objects": 0,
+        "source_bytes": 0,
+        "soundings": 0,
+        "parquet_bytes": 0,
+        "packs": 0,
+        "reused_packs": 0,
+    }
+
+    def process(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        return write_sounding_pack(
+            rows,
+            output,
+            list_url=list_url,
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+            min_free_bytes=min_free_bytes,
+        )
+
+    pending: set[concurrent.futures.Future[dict[str, Any]]] = set()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        for rows in packs:
+            pending.add(executor.submit(process, rows))
+            if len(pending) < workers * 2:
+                continue
+            done, pending = concurrent.futures.wait(
+                pending, return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            for future in done:
+                accumulate_pack_totals(totals, future.result())
+                print_pack_progress(totals)
+        for future in concurrent.futures.as_completed(pending):
+            accumulate_pack_totals(totals, future.result())
+            print_pack_progress(totals)
+
+    limited = max_objects is not None or max_raw_bytes is not None
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "inventory_root": str(inventory_root.resolve()),
+        "list_url": list_url,
+        **totals,
+        "complete": not limited,
+        "limited": limited,
+        "completed_at": iso_z(utc_now()),
+    }
+    if totals["source_bytes"]:
+        manifest["compression_ratio"] = totals["source_bytes"] / max(
+            1, totals["parquet_bytes"]
+        )
+    atomic_json(output / "manifest.json", manifest)
+    return manifest
+
+
+def accumulate_pack_totals(totals: dict[str, int], result: Mapping[str, Any]) -> None:
+    totals["source_objects"] += int(result["source_objects"])
+    totals["source_bytes"] += int(result["source_bytes"])
+    totals["soundings"] += int(result["soundings"])
+    totals["parquet_bytes"] += int(result["parquet_bytes"])
+    totals["packs"] += 1
+    totals["reused_packs"] += int(bool(result.get("reused")))
+
+
+def print_pack_progress(totals: Mapping[str, int]) -> None:
+    print(
+        f"NOAA sounding archive: {totals['source_objects']} objects, "
+        f"{totals['source_bytes']} source bytes, {totals['soundings']} soundings, "
+        f"{totals['parquet_bytes']} Parquet bytes",
+        flush=True,
+    )
 
 
 def prepare_output(output: Path, overwrite: bool) -> None:
@@ -1119,6 +1685,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             list_url=args.list_url,
             prefix=args.prefix,
             max_pages=args.max_pages,
+            timeout_seconds=args.timeout_seconds,
+            retries=args.retries,
+        )
+        print(json.dumps(manifest, indent=2, sort_keys=True))
+        return 0
+    if args.command == "sync-s3-sharded":
+        manifest = sync_s3_sharded_inventory(
+            root=args.root,
+            list_url=args.list_url,
+            prefix=args.prefix,
+            workers=args.workers,
+            max_pages=args.max_pages,
+            timeout_seconds=args.timeout_seconds,
+            retries=args.retries,
+            refresh=args.refresh,
+        )
+        print(json.dumps(manifest, indent=2, sort_keys=True))
+        return 0
+    if args.command == "mirror-soundings":
+        manifest = mirror_soundings(
+            inventory_root=args.inventory_root,
+            output=args.output,
+            list_url=args.list_url,
+            workers=args.workers,
+            target_pack_bytes=args.target_pack_bytes,
+            max_pack_objects=args.max_pack_objects,
+            max_objects=args.max_objects,
+            max_raw_bytes=args.max_raw_bytes,
+            min_free_bytes=args.min_free_bytes,
             timeout_seconds=args.timeout_seconds,
             retries=args.retries,
         )
