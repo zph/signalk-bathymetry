@@ -27,6 +27,22 @@ test('cached NOAA depths remain available during discovery outages', async () =>
   }
 })
 
+test('generalized NOAA lane vectors are served as cacheable MVT', async () => {
+  const tile = Buffer.from('vector tile')
+  const runtime = {
+    csbViewport: { nauticalLaneVectors: async () => tile }
+  } as unknown as Runtime
+  const result = fakeResponse()
+  await tileHandler(runtime, '/csb/nautical-lanes-vector/:z/:x/:y.pbf')(
+    fakeRequest({}, { z: '11', x: '327', y: '791' }),
+    result.response
+  )
+  assert.equal(result.status(), 200)
+  assert.equal(result.headers.get('Content-Type'), 'application/vnd.mapbox-vector-tile')
+  assert.equal(result.headers.get('Cache-Control'), 'private, max-age=86400, immutable')
+  assert.deepEqual(result.body(), tile)
+})
+
 function tileHandler(runtime: Runtime, route = '/tiles/:z/:x/:y.pbf'): Handler {
   const routes = new Map<string, Handler>()
   const accessRouter = {
@@ -51,10 +67,13 @@ function tileHandler(runtime: Runtime, route = '/tiles/:z/:x/:y.pbf'): Handler {
   return handler
 }
 
-function fakeRequest(query: Record<string, string>): Request {
+function fakeRequest(
+  query: Record<string, string>,
+  params: Record<string, string> = { z: '16', x: '0', y: '0' }
+): Request {
   return {
     query,
-    params: { z: '16', x: '0', y: '0' },
+    params,
     headers: {},
   } as unknown as Request
 }

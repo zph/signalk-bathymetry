@@ -2,6 +2,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchCsbCsv, discoverFiles, parseCsbCsv, type Bbox, type NoaaCsbStore } from './noaa-csb'
 import { mercatorToLonLat, tileMercatorBounds } from './geo'
+import {
+  encodeNauticalLaneVectors,
+  nauticalLaneVectorUrl,
+  NOAA_CSB_LANES_VECTOR_REVISION
+} from './noaa-csb-lanes'
 
 const DAY = 86_400_000
 const MAX_FILES = 50
@@ -105,6 +110,7 @@ export class NoaaCsbViewport {
   private checked = new Map<string, number>()
   private coveragePending = new Map<string, Promise<Buffer>>()
   private lanesPending = new Map<string, Promise<Buffer>>()
+  private laneVectorsPending = new Map<string, Promise<Buffer>>()
   private lanesCache = new Map<string, Buffer>()
   private lanesCacheBytes = 0
   private tail: Promise<void> = Promise.resolve()
@@ -181,7 +187,8 @@ export class NoaaCsbViewport {
   }
 
   async nauticalLanes(z: number, x: number, y: number): Promise<Buffer> {
-    const key = `${z}-${x}-${y}`
+    const tileKey = `${z}-${x}-${y}`
+    const key = `raster-${tileKey}`
     const cached = this.lanesCache.get(key)
     if (cached) {
       this.lanesCache.delete(key)
@@ -192,7 +199,7 @@ export class NoaaCsbViewport {
     if (existing) return existing
     if (this.lanesPending.size >= 32) throw new Error('NOAA nautical lanes are busy; retry shortly')
     const task = this.loadRenderedTile(
-      join(this.cacheDir, `${NOAA_CSB_LANES_STYLE_REVISION}-${key}.json`),
+      join(this.cacheDir, `${NOAA_CSB_LANES_STYLE_REVISION}-${tileKey}.json`),
       nauticalLanesUrl(z, x, y)
     )
       .then((image) => {
@@ -203,6 +210,35 @@ export class NoaaCsbViewport {
         this.lanesPending.delete(key)
       })
     this.lanesPending.set(key, task)
+    return task
+  }
+
+  async nauticalLaneVectors(z: number, x: number, y: number): Promise<Buffer> {
+    const key = `vector-${z}-${x}-${y}`
+    const cached = this.lanesCache.get(key)
+    if (cached) {
+      this.lanesCache.delete(key)
+      this.lanesCache.set(key, cached)
+      return cached
+    }
+    const existing = this.laneVectorsPending.get(key)
+    if (existing) return existing
+    if (this.laneVectorsPending.size >= 16)
+      throw new Error('NOAA lane vectors are busy; retry shortly')
+    const task = this.loadLaneVector(
+      join(this.cacheDir, `${NOAA_CSB_LANES_VECTOR_REVISION}-${z}-${x}-${y}.json`),
+      z,
+      x,
+      y
+    )
+      .then((tile) => {
+        this.rememberLane(key, tile)
+        return tile
+      })
+      .finally(() => {
+        this.laneVectorsPending.delete(key)
+      })
+    this.laneVectorsPending.set(key, task)
     return task
   }
 
@@ -279,6 +315,35 @@ export class NoaaCsbViewport {
       return image
     } catch (error) {
       if (cached) return Buffer.from(cached.image, 'base64')
+      throw error
+    }
+  }
+
+  private async loadLaneVector(
+    path: string,
+    z: number,
+    x: number,
+    y: number
+  ): Promise<Buffer> {
+    let cached: { at: number; tile: string } | undefined
+    try {
+      cached = JSON.parse(await readFile(path, 'utf8')) as typeof cached
+    } catch {
+      /* first request */
+    }
+    if (cached && Date.now() - cached.at < DAY) return Buffer.from(cached.tile, 'base64')
+    try {
+      const response = await this.fetcher(nauticalLaneVectorUrl(z, x, y), {
+        signal: this.signal()
+      })
+      if (!response.ok) throw new Error(`NOAA lane vectors returned HTTP ${response.status}`)
+      const body = await response.json()
+      const tile = encodeNauticalLaneVectors(body, z, x, y)
+      await mkdir(this.cacheDir, { recursive: true })
+      await writeFile(path, JSON.stringify({ at: Date.now(), tile: tile.toString('base64') }))
+      return tile
+    } catch (error) {
+      if (cached) return Buffer.from(cached.tile, 'base64')
       throw error
     }
   }

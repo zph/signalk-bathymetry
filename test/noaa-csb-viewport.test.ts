@@ -11,6 +11,11 @@ import {
   laneShoulderWidth,
   nauticalLanesUrl
 } from '../src/noaa-csb-viewport'
+import {
+  encodeNauticalLaneVectors,
+  nauticalLaneVectorUrl,
+  NOAA_CSB_LANES_VECTOR_REVISION
+} from '../src/noaa-csb-lanes'
 
 test('viewport demand coalesces, retains full files across areas, and does no work at world zoom', async (t) => {
   const dir = mkdtempSync(join(process.cwd(), '.csb-viewport-'))
@@ -89,6 +94,88 @@ test('nautical lanes use opaque colors and resolve finer paths at closer zooms',
     closeLayers[0].drawingInfo.renderer.symbol.width <
       layers[0].drawingInfo.renderer.symbol.width
   )
+})
+
+test('nautical lane vectors request a bounded longest-route sample with tile quantization', () => {
+  const url = new URL(nauticalLaneVectorUrl(11, 327, 791))
+  assert.match(url.pathname, /MapServer\/1\/query$/)
+  assert.equal(url.searchParams.get('f'), 'json')
+  assert.equal(url.searchParams.get('resultRecordCount'), '500')
+  assert.equal(url.searchParams.get('orderByFields'), 'Shape_Length DESC,OBJECTID ASC')
+  const quantization = JSON.parse(url.searchParams.get('quantizationParameters')!)
+  assert.equal(quantization.mode, 'view')
+  assert.equal(quantization.originPosition, 'upperLeft')
+  assert.ok(quantization.tolerance > 0)
+})
+
+test('quantized NOAA routes become clipped crisp MVT lines', () => {
+  const url = new URL(nauticalLaneVectorUrl(11, 327, 791))
+  const quantization = JSON.parse(url.searchParams.get('quantizationParameters')!)
+  const tile = encodeNauticalLaneVectors(
+    {
+      transform: {
+        originPosition: 'upperLeft',
+        scale: [quantization.tolerance, quantization.tolerance],
+        translate: [quantization.extent.xmin, quantization.extent.ymax]
+      },
+      features: [
+        {
+          attributes: { OBJECTID: 42 },
+          geometry: { paths: [[[20, 20], [80, 20], [80, 40]]] }
+        }
+      ]
+    },
+    11,
+    327,
+    791
+  )
+  assert.ok(tile.includes(Buffer.from('TRACKLINE')))
+  assert.ok(tile.includes(Buffer.from('CSB_GENERALIZED')))
+  assert.ok(tile.length < 1_000)
+})
+
+test('nautical lane vector tiles coalesce and persist on disk', async (t) => {
+  const dir = mkdtempSync(join(process.cwd(), '.csb-lane-vectors-'))
+  const store = new NoaaCsbStore(join(dir, 'store.sqlite'))
+  t.after(() => {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  let calls = 0
+  const query = new URL(nauticalLaneVectorUrl(11, 327, 791))
+  const quantization = JSON.parse(query.searchParams.get('quantizationParameters')!)
+  const body = {
+    transform: {
+      originPosition: 'upperLeft',
+      scale: [quantization.tolerance, quantization.tolerance],
+      translate: [quantization.extent.xmin, quantization.extent.ymax]
+    },
+    features: [
+      {
+        attributes: { OBJECTID: 42 },
+        geometry: { paths: [[[20, 20], [80, 20], [80, 40]]] }
+      }
+    ]
+  }
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return Response.json(body)
+  }
+  const service = new NoaaCsbViewport(store, dir, fetcher)
+  const tiles = await Promise.all(
+    Array.from({ length: 8 }, () => service.nauticalLaneVectors(11, 327, 791))
+  )
+  assert.equal(calls, 1)
+  assert.deepEqual(tiles[0], tiles[7])
+  assert.ok(tiles[0]!.includes(Buffer.from('TRACKLINE')))
+  assert.ok(
+    readFileSync(join(dir, `${NOAA_CSB_LANES_VECTOR_REVISION}-11-327-791.json`)).length > 20
+  )
+  const restarted = new NoaaCsbViewport(store, dir, fetcher)
+  await restarted.nauticalLaneVectors(11, 327, 791)
+  assert.equal(calls, 1)
+  service.stop()
+  restarted.stop()
 })
 
 test('nautical lane tiles coalesce and persist independently of coverage', async (t) => {

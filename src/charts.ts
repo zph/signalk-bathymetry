@@ -3,6 +3,7 @@ import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
 import type { NoaaCsbStore } from './noaa-csb'
 import { NOAA_CSB_LANES_STYLE_REVISION } from './noaa-csb-viewport'
+import { NOAA_CSB_LANES_VECTOR_REVISION } from './noaa-csb-lanes'
 import {
   CELL_SIZE_SCALE_DEFAULT,
   CELL_SIZE_SCALE_MAX,
@@ -82,6 +83,7 @@ async function noaaCsbChartResource(config: BathymetryConfig): Promise<Record<st
     url: tileUrl,
     tilemapUrl: tileUrl,
     nauticalLanesTilemapUrl: `/plugins/signalk-bathymetry/csb/nautical-lanes/{z}/{x}/{y}.png?style=${NOAA_CSB_LANES_STYLE_REVISION}`,
+    nauticalLanesVectorTilemapUrl: `/plugins/signalk-bathymetry/csb/nautical-lanes-vector/{z}/{x}/{y}.pbf?style=${NOAA_CSB_LANES_VECTOR_REVISION}`,
     layers: ['SOUNDG', 'DEPCNT'],
     chartLayers: ['SOUNDG', 'DEPCNT'],
     featureInfo: 'noaa-csb-sounding',

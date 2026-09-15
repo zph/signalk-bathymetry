@@ -245,6 +245,22 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
+  read.get('/csb/nautical-lanes-vector/:z/:x/:y.pbf', async (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 10, 11)
+      const x = integerParam(request, 'x', 0, 2 ** z - 1)
+      const y = integerParam(request, 'y', 0, 2 ** z - 1, '.pbf')
+      const tile = await runtime.csbViewport.nauticalLaneVectors(z, x, y)
+      response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+      response.set('Cache-Control', 'private, max-age=86400, immutable')
+      response.send(tile)
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
   read.get('/csb/tiles/:z/:x/:y.pbf', async (request, response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
@@ -441,6 +457,9 @@ export function openApi(): object {
       },
       '/csb/nautical-lanes/{z}/{x}/{y}.png': {
         get: operation('Generalized NOAA journey density for traffic awareness')
+      },
+      '/csb/nautical-lanes-vector/{z}/{x}/{y}.pbf': {
+        get: operation('Render bounded, generalized NOAA journey vectors for traffic awareness')
       },
       '/csb/journeys': {
         get: operation('List vessel and source-file journey segments')
