@@ -143,6 +143,15 @@ export function encodeSoundingPointTile(features: readonly VectorPointFeature[])
   return tile.finish()
 }
 
+export function encodeDepthContourTile(features: Array<{ring: Array<{x:number;y:number}>; depth:number}>): Buffer {
+  const tile = new ProtoWriter()
+  tile.bytesField(3, encodeLayer('DEPCNT', features.map(f => ({
+    ring:f.ring, point:f.ring[0]!, properties:{VALDCO:f.depth, BATHY_DATUM:'UNKNOWN',
+      CSB_DERIVED:true, CSB_NOT_FOR_NAVIGATION:true, BATHYMETRY_PROVIDER:'noaa-csb'}
+  })), 'line'))
+  return tile.finish()
+}
+
 function cellFeature(
   cell: SurfaceCell,
   bounds: ReturnType<typeof tileMercatorBounds>,
@@ -252,7 +261,7 @@ function encodeVectorTile(features: readonly VectorFeature[]): Buffer {
 function encodeLayer(
   name: string,
   features: readonly VectorFeature[],
-  geometryType: 'polygon' | 'point'
+  geometryType: 'polygon' | 'point' | 'line'
 ): Buffer {
   const layer = new ProtoWriter()
   layer.uintField(15, 2)
@@ -295,11 +304,11 @@ function encodeLayer(
 function encodeFeature(
   tags: readonly number[],
   vector: VectorFeature,
-  geometryType: 'polygon' | 'point'
+  geometryType: 'polygon' | 'point' | 'line'
 ): Buffer {
   const feature = new ProtoWriter()
   feature.packedUIntField(2, tags)
-  feature.uintField(3, geometryType === 'polygon' ? 3 : 1)
+  feature.uintField(3, geometryType === 'polygon' ? 3 : geometryType === 'line' ? 2 : 1)
   const geometry: number[] = []
   if (geometryType === 'point') {
     geometry.push(command(1, 1), zigZag(vector.point.x), zigZag(vector.point.y))
@@ -307,7 +316,7 @@ function encodeFeature(
     return feature.finish()
   }
   const first = vector.ring[0]
-  if (!first || vector.ring.length < 3) return feature.finish()
+  if (!first || vector.ring.length < (geometryType === 'line' ? 2 : 3)) return feature.finish()
   geometry.push(command(1, 1), zigZag(first.x), zigZag(first.y))
   let previous = first
   geometry.push(command(2, vector.ring.length - 1))
@@ -315,7 +324,7 @@ function encodeFeature(
     geometry.push(zigZag(point.x - previous.x), zigZag(point.y - previous.y))
     previous = point
   }
-  geometry.push(command(7, 1))
+  if (geometryType === 'polygon') geometry.push(command(7, 1))
   feature.packedUIntField(4, geometry)
   return feature.finish()
 }

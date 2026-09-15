@@ -237,6 +237,27 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const maxCoordinate = 2 ** z - 1
       const x = integerParam(request, 'x', 0, maxCoordinate)
       const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
+      if (z >= 12) {
+        const archiveUrl = process.env.NOAA_CSB_ARCHIVE_URL || 'http://127.0.0.1:3011'
+        try {
+          const local = await fetch(`${archiveUrl.replace(/\/$/, '')}/api/soundings/${z}/${x}/${y}.json`, {
+            signal: AbortSignal.timeout(25_000)
+          })
+          if (!local.ok) throw new Error(`Archive returned ${local.status}`)
+          const body = await local.json() as { soundings: import('./noaa-csb').CsbSounding[] }
+          if (!Array.isArray(body.soundings)) throw new Error('Invalid archive response')
+          const rendered = runtime.csbRenderer.render(z, x, y, body.soundings)
+          response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+          response.set('Cache-Control', 'private, max-age=60')
+          response.set('X-CSB-Data-Status', 'local-archive')
+          response.set('X-CSB-Sounding-Count', String(rendered.soundingCount))
+          response.set('X-CSB-Point-Count', String(rendered.pointCount))
+          response.send(rendered.tile)
+          return
+        } catch {
+          // Retain the existing NOAA/cache path when the optional local archive is absent.
+        }
+      }
       let downloadFailed = false
       try {
         await runtime.csbViewport.ensure(z, x, y)

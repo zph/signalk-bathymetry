@@ -62,7 +62,7 @@ test('chart provider advertises cached NOAA depths as a separate disabled layer'
   const resources = await provider.methods.listResources({})
   const resource = resources['signalk-bathymetry-noaa-csb-vector'] as Record<string, unknown>
   assert.ok(resource)
-  assert.deepEqual(resource.layers, ['SOUNDG'])
+  assert.deepEqual(resource.layers, ['SOUNDG', 'DEPCNT'])
   assert.equal(resource.defaultVisible, false)
   assert.equal(resource.defaultOpacity, 0.65)
   assert.match(String(resource.description), /unknown/i)

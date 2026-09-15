@@ -58,7 +58,7 @@ export function createChartProvider(
 }
 
 function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown> {
-  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=cached-depths-v2'
+  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=archive-depths-v3'
   return {
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',
@@ -73,8 +73,8 @@ function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown>
     url: tileUrl,
     tilemapUrl: tileUrl,
     coverageTilemapUrl: `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`,
-    layers: ['SOUNDG'],
-    chartLayers: ['SOUNDG'],
+    layers: ['SOUNDG', 'DEPCNT'],
+    chartLayers: ['SOUNDG', 'DEPCNT'],
     featureInfo: 'noaa-csb-sounding',
     defaultOpacity: Math.min(config.overlayOpacity, 0.65),
     defaultVisible: false

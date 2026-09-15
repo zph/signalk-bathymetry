@@ -1,6 +1,7 @@
 import { lonLatToMercator, mercatorToLonLat, tileMercatorBounds } from './geo'
 import type { CsbSounding, NoaaCsbStore } from './noaa-csb'
-import { encodeSoundingPointTile } from './vector-tiles'
+import { encodeSoundingPointTile, encodeDepthContourTile } from './vector-tiles'
+import { observedContours } from './noaa-csb-contours'
 
 const MVT_EXTENT = 4096
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686
@@ -29,7 +30,7 @@ export class NoaaCsbTileRenderer {
     private readonly maxZoom = 24
   ) {}
 
-  render(z: number, x: number, y: number): RenderedCsbTile {
+  render(z: number, x: number, y: number, archiveSoundings?: CsbSounding[]): RenderedCsbTile {
     const cellMeters = Math.max(
       MIN_DISPLAY_CELL_M,
       (EARTH_CIRCUMFERENCE_M / 2 ** z / 256) * 2
@@ -45,7 +46,7 @@ export class NoaaCsbTileRenderer {
     const bounds = tileMercatorBounds(z, x, y)
     const southwest = mercatorToLonLat(bounds.minX, bounds.minY)
     const northeast = mercatorToLonLat(bounds.maxX, bounds.maxY)
-    const soundings = this.store.listSoundings(
+    const soundings = archiveSoundings ?? this.store.listSoundings(
       [southwest.longitude, southwest.latitude, northeast.longitude, northeast.latitude],
       MAX_QUERY_SOUNDINGS
     )
@@ -82,7 +83,7 @@ export class NoaaCsbTileRenderer {
       }
     })
     return {
-      tile: encodeSoundingPointTile(features),
+      tile: Buffer.concat([encodeSoundingPointTile(features),encodeDepthContourTile(observedContours(soundings,z,x,y))]),
       soundingCount: soundings.length,
       pointCount: features.length,
       cellMeters
