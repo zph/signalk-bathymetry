@@ -53,6 +53,11 @@ Qualification values are deliberately conservative:
 The raw metadata remains authoritative. Normalized qualification can be rebuilt
 when NOAA schemas or our policy evolve.
 
+The home-server deployment does not use this tool's optional sounding mirror.
+Its `noaa-csb-metadata` stage shares the existing NOAA archive data root, fetches
+only Crowbar metadata, and joins that metadata to the soundings already managed
+by `noaa-csb-archive`.
+
 ## Run locally
 
 Python 3.11+ and DuckDB are required for Parquet materialization. Metadata sync
@@ -71,6 +76,11 @@ python tools/noaa-csb-metadata/pipeline.py sync-s3-sharded \
 python tools/noaa-csb-metadata/pipeline.py build \
   --root /data/noaa-csb-metadata/mirror \
   --output /data/noaa-csb-metadata/parquet
+
+python tools/noaa-csb-metadata/pipeline.py daemon \
+  --root /data/noaa-csb-archive/crowbar/mirror \
+  --output /data/noaa-csb-archive/crowbar/parquet \
+  --workers 32 --interval-seconds 86400
 ```
 
 The first command freezes an upper `lastUpdated` cutoff, downloads pages in
@@ -78,6 +88,12 @@ stable `traceId` order, retries transient failures, and resumes an interrupted
 run. A completed run advances the incremental watermark. `--full` starts a new
 full reconciliation. `--max-pages` exists for testing and never advances the
 watermark unless it happens to cover the whole response.
+
+`daemon` runs that same resumable sync, atomically rebuilds the metadata Parquet
+catalog, then sleeps until the next incremental cycle. It writes `status.json`
+throughout the sync so the archive dashboard can show stage, progress, rate, ETA,
+watermark, and next run. The first successful baseline is the only full Crowbar
+scan; later cycles request records changed since the stored cutoff.
 
 The S3 crawl uses unauthenticated `ListObjectsV2`, follows continuation tokens,
 and checkpoints every 1,000-object page. `sync-s3-sharded` first discovers the

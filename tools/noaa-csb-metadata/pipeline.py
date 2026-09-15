@@ -142,6 +142,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     run.add_argument("--s3-list-url", default=DEFAULT_S3_LIST_URL)
     run.add_argument("--s3-prefix", default=DEFAULT_S3_PREFIX)
 
+    daemon = subparsers.add_parser(
+        "daemon", help="continuously sync Crowbar metadata and rebuild its Parquet index"
+    )
+    add_sync_arguments(daemon)
+    daemon.add_argument("--output", type=Path, required=True)
+    daemon.add_argument("--interval-seconds", type=int, default=86400)
+
     return parser.parse_args(argv)
 
 
@@ -633,6 +640,33 @@ def sync_metadata(
         page for page in range(2, target_pages + 1) if not page_path(pages_dir, page).exists()
     ]
     completed = target_pages - len(missing_pages)
+    progress_started = time.monotonic()
+    status_path = root / "status.json"
+
+    def write_progress(done: int, stage: str = "metadata_sync") -> None:
+        elapsed = max(0.001, time.monotonic() - progress_started)
+        advanced = max(0, done - completed)
+        pages_per_second = advanced / elapsed
+        remaining = max(0, target_pages - done)
+        atomic_json(
+            status_path,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "stage": stage,
+                "mode": "baseline" if lower_bound is None else "incremental",
+                "run_id": run_id,
+                "cutoff": cutoff,
+                "lower_bound": lower_bound,
+                "total_records": int(first_payload["totalItems"]),
+                "total_pages": target_pages,
+                "completed_pages": done,
+                "pages_per_second": pages_per_second,
+                "eta_seconds": remaining / pages_per_second if pages_per_second else None,
+                "updated_at": iso_z(utc_now()),
+            },
+        )
+
+    write_progress(completed)
     print(
         f"NOAA metadata run {run_id}: {first_payload['totalItems']} records, "
         f"{target_pages} pages ({completed} already present)",
@@ -657,6 +691,7 @@ def sync_metadata(
             page, count = future.result()
             item_count += count
             if index % 25 == 0 or index == len(missing_pages):
+                write_progress(completed + index)
                 print(
                     f"downloaded {completed + index}/{target_pages} pages "
                     f"(latest page {page})",
@@ -682,12 +717,82 @@ def sync_metadata(
         state["last_successful_cutoff"] = cutoff
         state["in_progress"] = None
         atomic_json(state_path, state)
+        write_progress(target_pages, "metadata_sync_complete")
     else:
         print(
             "Partial run retained for validation; the incremental watermark was not advanced.",
             file=sys.stderr,
         )
     return manifest
+
+
+def run_daemon(args: argparse.Namespace) -> None:
+    if args.interval_seconds < 60:
+        raise ValueError("interval-seconds must be at least 60")
+    status_path = args.root / "status.json"
+    while True:
+        try:
+            sync_manifest = sync_metadata(
+                root=args.root,
+                api_url=args.api_url,
+                workers=args.workers,
+                max_pages=args.max_pages,
+                full=args.full,
+                timeout_seconds=args.timeout_seconds,
+                retries=args.retries,
+            )
+            atomic_json(
+                status_path,
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "stage": "parquet_build",
+                    "mode": "baseline" if sync_manifest.get("lower_bound") is None else "incremental",
+                    "run_id": sync_manifest["run_id"],
+                    "cutoff": sync_manifest["cutoff"],
+                    "total_records": sync_manifest["reported_total_items"],
+                    "total_pages": sync_manifest["reported_total_pages"],
+                    "completed_pages": sync_manifest["downloaded_pages"],
+                    "updated_at": iso_z(utc_now()),
+                },
+            )
+            build_manifest = build_parquet(args.root, args.output, overwrite=True)
+            completed_at = iso_z(utc_now())
+            next_run_at = iso_z(utc_now() + dt.timedelta(seconds=args.interval_seconds))
+            atomic_json(
+                status_path,
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "stage": "idle",
+                    "mode": "incremental",
+                    "run_id": sync_manifest["run_id"],
+                    "cutoff": sync_manifest["cutoff"],
+                    "total_records": sync_manifest["reported_total_items"],
+                    "total_pages": sync_manifest["reported_total_pages"],
+                    "completed_pages": sync_manifest["downloaded_pages"],
+                    "metadata_records": build_manifest.get("current_trace_records"),
+                    "file_index_records": build_manifest.get("file_index_records"),
+                    "completed_at": completed_at,
+                    "next_run_at": next_run_at,
+                    "updated_at": completed_at,
+                },
+            )
+            time.sleep(args.interval_seconds)
+        except KeyboardInterrupt:
+            return
+        except Exception as error:
+            retry_at = iso_z(utc_now() + dt.timedelta(minutes=5))
+            atomic_json(
+                status_path,
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "stage": "retry_wait",
+                    "error": str(error),
+                    "retry_at": retry_at,
+                    "updated_at": iso_z(utc_now()),
+                },
+            )
+            print(f"metadata cycle failed; retrying in 300s: {error}", file=sys.stderr, flush=True)
+            time.sleep(300)
 
 
 def page_path(pages_dir: Path, page: int) -> Path:
@@ -1679,6 +1784,9 @@ def sql_literal(value: str) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command == "daemon":
+        run_daemon(args)
+        return 0
     if args.command == "sync-s3":
         manifest = sync_s3_inventory(
             root=args.root,

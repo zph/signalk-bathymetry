@@ -297,5 +297,58 @@ class ParquetBuildTest(unittest.TestCase):
             )
 
 
+class IncrementalDaemonTest(unittest.TestCase):
+    def test_sync_writes_dashboard_progress_and_advances_watermark(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def page(_url, number, *_args):
+                return {
+                    "page": number,
+                    "totalPages": 2,
+                    "totalItems": 2,
+                    "items": [{
+                        "traceId": f"trace-{number}",
+                        "fileName": f"2026010{number}_boat.tar.gz",
+                        "metadata": {},
+                    }],
+                }
+
+            with mock.patch.object(PIPELINE, "fetch_page", side_effect=page):
+                manifest = PIPELINE.sync_metadata(root, workers=2)
+            status = json.loads((root / "status.json").read_text())
+            state = json.loads((root / "state.json").read_text())
+            self.assertTrue(manifest["complete"])
+            self.assertEqual(status["stage"], "metadata_sync_complete")
+            self.assertEqual(status["completed_pages"], 2)
+            self.assertEqual(status["total_pages"], 2)
+            self.assertEqual(state["last_successful_cutoff"], manifest["cutoff"])
+            self.assertIsNone(state["in_progress"])
+
+    def test_daemon_publishes_completed_build_before_sleep(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "mirror"
+            output = Path(directory) / "parquet"
+            args = PIPELINE.parse_args([
+                "daemon", "--root", str(root), "--output", str(output),
+                "--interval-seconds", "60"
+            ])
+            sync = {
+                "run_id": "run", "cutoff": "2026-09-15T00:00:00Z",
+                "lower_bound": None, "reported_total_items": 10,
+                "reported_total_pages": 1, "downloaded_pages": 1,
+            }
+            build = {"current_trace_records": 9, "file_index_records": 8}
+            with mock.patch.object(PIPELINE, "sync_metadata", return_value=sync), \
+                    mock.patch.object(PIPELINE, "build_parquet", return_value=build), \
+                    mock.patch.object(PIPELINE.time, "sleep", side_effect=KeyboardInterrupt):
+                PIPELINE.run_daemon(args)
+            status = json.loads((root / "status.json").read_text())
+            self.assertEqual(status["stage"], "idle")
+            self.assertEqual(status["metadata_records"], 9)
+            self.assertEqual(status["file_index_records"], 8)
+            self.assertIn("next_run_at", status)
+
+
 if __name__ == "__main__":
     unittest.main()
