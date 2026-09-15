@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import datetime as dt
 import gzip
 import hashlib
@@ -77,43 +78,44 @@ class MetadataLookupIndex:
     def __init__(self, path: Path):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as connection:
-            connection.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-                PRAGMA synchronous=NORMAL;
-                CREATE TABLE IF NOT EXISTS metadata_records(
-                  trace_id TEXT PRIMARY KEY,
-                  file_name TEXT NOT NULL,
-                  last_updated TEXT,
-                  s3_uri TEXT,
-                  start_time TEXT,
-                  depth_reference TEXT,
-                  sounder_draft_m REAL,
-                  draft_applied INTEGER,
-                  sound_speed_documented INTEGER,
-                  position_offsets_documented INTEGER,
-                  motion_offsets_applied INTEGER,
-                  vertical_reduction_reference TEXT,
-                  vertical_reduction_method TEXT,
-                  vertical_reduction_model TEXT,
-                  qualification TEXT NOT NULL,
-                  eligible_for_direct_fusion INTEGER NOT NULL,
-                  qualification_reasons_json TEXT NOT NULL
-                ) STRICT;
-                CREATE INDEX IF NOT EXISTS metadata_records_file_name
-                  ON metadata_records(file_name, last_updated DESC, trace_id DESC);
-                CREATE TABLE IF NOT EXISTS indexed_pages(
-                  run_id TEXT NOT NULL,
-                  page_number INTEGER NOT NULL,
-                  indexed_at TEXT NOT NULL,
-                  PRIMARY KEY(run_id, page_number)
-                ) STRICT;
-                """
-            )
+        with contextlib.closing(sqlite3.connect(path)) as connection:
+            with connection:
+                connection.executescript(
+                    """
+                    PRAGMA journal_mode=WAL;
+                    PRAGMA synchronous=NORMAL;
+                    CREATE TABLE IF NOT EXISTS metadata_records(
+                      trace_id TEXT PRIMARY KEY,
+                      file_name TEXT NOT NULL,
+                      last_updated TEXT,
+                      s3_uri TEXT,
+                      start_time TEXT,
+                      depth_reference TEXT,
+                      sounder_draft_m REAL,
+                      draft_applied INTEGER,
+                      sound_speed_documented INTEGER,
+                      position_offsets_documented INTEGER,
+                      motion_offsets_applied INTEGER,
+                      vertical_reduction_reference TEXT,
+                      vertical_reduction_method TEXT,
+                      vertical_reduction_model TEXT,
+                      qualification TEXT NOT NULL,
+                      eligible_for_direct_fusion INTEGER NOT NULL,
+                      qualification_reasons_json TEXT NOT NULL
+                    ) STRICT;
+                    CREATE INDEX IF NOT EXISTS metadata_records_file_name
+                      ON metadata_records(file_name, last_updated DESC, trace_id DESC);
+                    CREATE TABLE IF NOT EXISTS indexed_pages(
+                      run_id TEXT NOT NULL,
+                      page_number INTEGER NOT NULL,
+                      indexed_at TEXT NOT NULL,
+                      PRIMARY KEY(run_id, page_number)
+                    ) STRICT;
+                    """
+                )
 
     def index_page(self, run_id: str, page_number: int, path: Path) -> int:
-        with sqlite3.connect(self.path, timeout=30) as connection:
+        with contextlib.closing(sqlite3.connect(self.path, timeout=30)) as connection:
             present = connection.execute(
                 "SELECT 1 FROM indexed_pages WHERE run_id=? AND page_number=?",
                 (run_id, page_number),
@@ -135,20 +137,21 @@ class MetadataLookupIndex:
         updates = ",".join(
             f"{column}=excluded.{column}" for column in LOOKUP_COLUMNS if column != "trace_id"
         )
-        with sqlite3.connect(self.path, timeout=30) as connection:
-            connection.execute("PRAGMA busy_timeout=30000")
-            connection.executemany(
-                f"""INSERT INTO metadata_records({','.join(LOOKUP_COLUMNS)})
-                VALUES({placeholders})
-                ON CONFLICT(trace_id) DO UPDATE SET {updates}
-                WHERE coalesce(excluded.last_updated,'') >=
-                      coalesce(metadata_records.last_updated,'')""",
-                rows,
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO indexed_pages VALUES(?,?,?)",
-                (run_id, page_number, iso_z(utc_now())),
-            )
+        with contextlib.closing(sqlite3.connect(self.path, timeout=30)) as connection:
+            with connection:
+                connection.execute("PRAGMA busy_timeout=30000")
+                connection.executemany(
+                    f"""INSERT INTO metadata_records({','.join(LOOKUP_COLUMNS)})
+                    VALUES({placeholders})
+                    ON CONFLICT(trace_id) DO UPDATE SET {updates}
+                    WHERE coalesce(excluded.last_updated,'') >=
+                          coalesce(metadata_records.last_updated,'')""",
+                    rows,
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO indexed_pages VALUES(?,?,?)",
+                    (run_id, page_number, iso_z(utc_now())),
+                )
         return len(rows)
 
 
