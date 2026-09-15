@@ -17,6 +17,7 @@ import json
 import os
 import random
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
@@ -54,6 +55,101 @@ METADATA_COLUMN_TYPES = {
     "geometry_json": "VARCHAR", "metadata_json": "VARCHAR",
     "other_locations_json": "VARCHAR", "raw_record_json": "VARCHAR",
 }
+
+LOOKUP_COLUMNS = (
+    "trace_id", "file_name", "last_updated", "s3_uri", "start_time",
+    "depth_reference", "sounder_draft_m", "draft_applied",
+    "sound_speed_documented", "position_offsets_documented",
+    "motion_offsets_applied", "vertical_reduction_reference",
+    "vertical_reduction_method", "vertical_reduction_model", "qualification",
+    "eligible_for_direct_fusion", "qualification_reasons_json",
+)
+
+
+class MetadataLookupIndex:
+    """Compact operational index consumed by the local Signal K plugin.
+
+    The complete raw record remains in the mirrored JSON and Parquet datasets. This
+    SQLite projection contains only fields needed to qualify and render a sounding,
+    so serving local metadata does not require scanning Parquet or calling Crowbar.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as connection:
+            connection.executescript(
+                """
+                PRAGMA journal_mode=WAL;
+                PRAGMA synchronous=NORMAL;
+                CREATE TABLE IF NOT EXISTS metadata_records(
+                  trace_id TEXT PRIMARY KEY,
+                  file_name TEXT NOT NULL,
+                  last_updated TEXT,
+                  s3_uri TEXT,
+                  start_time TEXT,
+                  depth_reference TEXT,
+                  sounder_draft_m REAL,
+                  draft_applied INTEGER,
+                  sound_speed_documented INTEGER,
+                  position_offsets_documented INTEGER,
+                  motion_offsets_applied INTEGER,
+                  vertical_reduction_reference TEXT,
+                  vertical_reduction_method TEXT,
+                  vertical_reduction_model TEXT,
+                  qualification TEXT NOT NULL,
+                  eligible_for_direct_fusion INTEGER NOT NULL,
+                  qualification_reasons_json TEXT NOT NULL
+                ) STRICT;
+                CREATE INDEX IF NOT EXISTS metadata_records_file_name
+                  ON metadata_records(file_name, last_updated DESC, trace_id DESC);
+                CREATE TABLE IF NOT EXISTS indexed_pages(
+                  run_id TEXT NOT NULL,
+                  page_number INTEGER NOT NULL,
+                  indexed_at TEXT NOT NULL,
+                  PRIMARY KEY(run_id, page_number)
+                ) STRICT;
+                """
+            )
+
+    def index_page(self, run_id: str, page_number: int, path: Path) -> int:
+        with sqlite3.connect(self.path, timeout=30) as connection:
+            present = connection.execute(
+                "SELECT 1 FROM indexed_pages WHERE run_id=? AND page_number=?",
+                (run_id, page_number),
+            ).fetchone()
+            if present:
+                return 0
+        rows = []
+        for record in read_jsonl_gzip(path):
+            trace_id = optional_string(record.get("trace_id"))
+            file_name = optional_string(record.get("file_name"))
+            if not trace_id or not file_name:
+                continue
+            values = [record.get(column) for column in LOOKUP_COLUMNS]
+            for index in (7, 8, 9, 10, 15):
+                if values[index] is not None:
+                    values[index] = 1 if values[index] else 0
+            rows.append(tuple(values))
+        placeholders = ",".join("?" for _ in LOOKUP_COLUMNS)
+        updates = ",".join(
+            f"{column}=excluded.{column}" for column in LOOKUP_COLUMNS if column != "trace_id"
+        )
+        with sqlite3.connect(self.path, timeout=30) as connection:
+            connection.execute("PRAGMA busy_timeout=30000")
+            connection.executemany(
+                f"""INSERT INTO metadata_records({','.join(LOOKUP_COLUMNS)})
+                VALUES({placeholders})
+                ON CONFLICT(trace_id) DO UPDATE SET {updates}
+                WHERE coalesce(excluded.last_updated,'') >=
+                      coalesce(metadata_records.last_updated,'')""",
+                rows,
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO indexed_pages VALUES(?,?,?)",
+                (run_id, page_number, iso_z(utc_now())),
+            )
+        return len(rows)
 
 
 def metadata_columns_sql() -> str:
@@ -659,6 +755,8 @@ def sync_metadata(
     first_path = page_path(pages_dir, 1)
     if not first_path.exists():
         write_page(first_path, first_payload, mirrored_at)
+    lookup = MetadataLookupIndex(root.parent / "metadata-lookup.sqlite")
+    lookup.index_page(run_id, 1, first_path)
 
     missing_pages = [
         page for page in range(2, target_pages + 1) if not page_path(pages_dir, page).exists()
@@ -708,12 +806,14 @@ def sync_metadata(
         existing = page_path(pages_dir, existing_page)
         if existing.exists():
             item_count += count_lines(existing)
+            lookup.index_page(run_id, existing_page, existing)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(download, page): page for page in missing_pages}
         for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
             page, count = future.result()
             item_count += count
+            lookup.index_page(run_id, page, page_path(pages_dir, page))
             if index % 25 == 0 or index == len(missing_pages):
                 write_progress(completed + index)
                 print(

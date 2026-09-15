@@ -66,6 +66,8 @@ export interface BathymetryConfig {
   autoBackfillWhenEmpty: boolean
   autoBackfillDays: number
   autoBackfillDelaySeconds: number
+  /** Local NOAA archive service used for Crowbar-derived quality; never the public Crowbar API. */
+  csbMetadataArchiveUrl: string
 }
 
 export interface SoundingInput {

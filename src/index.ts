@@ -29,7 +29,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
         const dataDirectory = app.getDataDirPath()
         const store = new BathymetryStore(join(dataDirectory, 'bathymetry.sqlite'), config)
         const csbStore = new NoaaCsbStore(join(dataDirectory, 'noaa-csb.sqlite'))
-        const csbImporter = new NoaaCsbImporter(csbStore)
+        const csbImporter = new NoaaCsbImporter(csbStore, config.csbMetadataArchiveUrl)
         const capture = new CaptureEngine(app, store, config)
         const history = new HistoryBackfill(app, capture, config)
         const autoBackfill = new AutoBackfill(app, store, history, config)
@@ -54,7 +54,12 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           vectorRenderer,
           csbStore,
           csbImporter,
-          csbViewport: new NoaaCsbViewport(csbStore, join(dataDirectory, 'csb-coverage')),
+          csbViewport: new NoaaCsbViewport(
+            csbStore,
+            join(dataDirectory, 'csb-coverage'),
+            fetch,
+            config.csbMetadataArchiveUrl
+          ),
           csbRenderer
         }
         app.registerResourceProvider(createChartProvider(store, config, csbStore))

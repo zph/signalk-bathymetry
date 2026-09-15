@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchCsbCsv, discoverFiles, parseCsbCsv, type Bbox, type NoaaCsbStore } from './noaa-csb'
-import { unknownQuality, withCsbMetadata } from './noaa-csb-metadata'
+import { unknownQuality, withLocalCsbMetadata } from './noaa-csb-metadata'
 import { mercatorToLonLat, tileMercatorBounds } from './geo'
 
 const DAY = 86_400_000
@@ -56,6 +56,7 @@ export function coverageUrl(z: number, x: number, y: number): string {
 export class NoaaCsbViewport {
   private pending = new Map<string, Promise<void>>()
   private checked = new Map<string, number>()
+  private metadataChecked = new Map<string, number>()
   private coveragePending = new Map<string, Promise<Buffer>>()
   private tail: Promise<void> = Promise.resolve()
   private abort = new AbortController()
@@ -64,7 +65,8 @@ export class NoaaCsbViewport {
   constructor(
     private readonly store: NoaaCsbStore,
     private readonly cacheDir: string,
-    private readonly fetcher: typeof fetch = fetch
+    private readonly fetcher: typeof fetch = fetch,
+    private readonly metadataArchiveUrl = 'http://host.containers.internal:3011'
   ) {}
 
   status() {
@@ -91,11 +93,23 @@ export class NoaaCsbViewport {
         this.abort.signal.throwIfAborted()
         const files = await discoverFiles(this.fetcher, bbox, MAX_FILES + 1, this.signal())
         for (const discovered of files.slice(0, MAX_FILES)) {
-          if (this.store.hasFullFile(discovered.name) && this.store.hasFileMetadata(discovered.name))
-            continue
-          const file = await withCsbMetadata(this.fetcher, discovered, this.signal())
+          if (
+            this.store.hasFullFile(discovered.name) &&
+            Date.now() - (this.metadataChecked.get(discovered.name) ?? 0) < DAY
+          ) continue
+          const lookup = await withLocalCsbMetadata(
+            this.fetcher, this.metadataArchiveUrl, discovered, this.signal()
+          )
+          const file = lookup.file
+          if (lookup.state !== 'unavailable') {
+            this.metadataChecked.set(file.name, Date.now())
+            if (this.metadataChecked.size > 4096)
+              this.metadataChecked.delete(this.metadataChecked.keys().next().value!)
+          }
           if (this.store.hasFullFile(file.name)) {
-            this.store.updateFileMetadata(file.name, file.quality ?? unknownQuality())
+            // Preserve known quality through a temporary local archive outage.
+            if (lookup.state !== 'unavailable')
+              this.store.updateFileMetadata(file.name, file.quality ?? unknownQuality())
             continue
           }
           const response = await fetchCsbCsv(this.fetcher, file.name, this.signal())

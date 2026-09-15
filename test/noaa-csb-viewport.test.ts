@@ -24,9 +24,9 @@ test('viewport demand coalesces, retains full files across areas, and does no wo
       indexCalls++
       return Response.json({ features: [{ attributes: { NAME: '202609120000_test.tar.gz' } }] })
     }
-    if (String(input).includes('/ingest-external/')) {
+    if (String(input).includes('/api/crowbar/metadata')) {
       metadataCalls++
-      return Response.json({ items: [] })
+      return new Response('not indexed', { status: 404 })
     }
     fileCalls++
     return new Response(

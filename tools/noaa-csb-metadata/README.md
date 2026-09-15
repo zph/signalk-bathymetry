@@ -154,7 +154,11 @@ NOAA_CSB_DATA_DIR=/srv/noaa-csb-metadata podman compose run --rm noaa-csb-soundi
 ```
 
 The inventory job records the exact public object count and source size. The
-metadata job performs an incremental Crowbar sync and atomically replaces the
-derived catalog. The soundings job downloads and packs all inventoried CSVs.
+metadata job performs an incremental Crowbar sync and atomically replaces only
+affected year partitions, with a full local compaction every 30 days. As each
+mirrored page becomes durable, the same job updates the compact sibling
+`metadata-lookup.sqlite`. The archive service uses this indexed quality projection
+for live plugin lookups, so chart requests never call Crowbar or scan Parquet. The
+soundings job downloads and packs all inventoried CSVs.
 Interrupted work remains resumable, and successful packs are checksum-verified
 before reuse.

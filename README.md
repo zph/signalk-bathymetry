@@ -135,8 +135,9 @@ POST /admin/csb/import {"bbox":[west,south,east,north],"maxFiles":2000}
 The NOAA import starts in the background. Poll `/csb/status` for discovery,
 download, invalid-row, and completion counts. Binnacle and other chart clients
 discover **NOAA Crowdsourced Bathymetry** as a chart
-resource, disabled by default. Each file is cross-referenced with NOAA's
-separate Crowbar metadata record. Documented datum correction, sensor draft,
+resource, disabled by default. Each file is cross-referenced with the locally
+mirrored NOAA Crowbar metadata index; the live plugin never calls Crowbar.
+Documented datum correction, sensor draft,
 offsets, and processing determine a conservative quality score; missing
 metadata remains explicitly low confidence. The observations stay visually and
 structurally separate from the plugin's tide-reduced local surface and are
@@ -200,5 +201,9 @@ derives the sounding `FILE_UUID` cross-reference, and builds
 Zstandard-compressed Parquet catalogs. Its reconciliation table exposes S3
 objects without metadata and metadata without S3 objects. It can also attach a
 compact set of qualified metadata fields to an existing sounding Parquet
-dataset. Raw NOAA metadata remains separate from the operational SQLite store
-and never causes an unknown depth to be promoted automatically.
+dataset. Raw NOAA metadata remains in the archive. A compact local SQLite
+projection of quality fields is updated page-by-page by the same incremental
+pipeline and served by the archive service. The plugin copies matched quality
+into its operational SQLite store and uses its score for rendering. Missing or
+temporarily unavailable local metadata remains explicitly low confidence and
+never triggers a live Crowbar call.

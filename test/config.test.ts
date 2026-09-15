@@ -63,3 +63,19 @@ test('display depth defaults to predicted and only accepts the two modes', () =>
   assert.equal(properties.displayDepth?.default, 'predicted')
   assert.deepEqual(properties.displayDepth?.enum, ['conservative', 'predicted'])
 })
+
+test('NOAA quality metadata defaults to the local archive service only', () => {
+  assert.equal(
+    normalizeConfig({}).csbMetadataArchiveUrl,
+    'http://host.containers.internal:3011'
+  )
+  assert.equal(
+    normalizeConfig({ csbMetadataArchiveUrl: ' http://archive.internal:3011/ ' })
+      .csbMetadataArchiveUrl,
+    'http://archive.internal:3011'
+  )
+  assert.equal(
+    normalizeConfig({ csbMetadataArchiveUrl: 'ftp://remote.example/' }).csbMetadataArchiveUrl,
+    'http://host.containers.internal:3011'
+  )
+})

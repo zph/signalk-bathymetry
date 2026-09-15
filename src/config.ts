@@ -41,7 +41,8 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   historyResolutionSeconds: 1,
   autoBackfillWhenEmpty: true,
   autoBackfillDays: 30,
-  autoBackfillDelaySeconds: 15
+  autoBackfillDelaySeconds: 15,
+  csbMetadataArchiveUrl: 'http://host.containers.internal:3011'
 }
 
 type RawConfig = Partial<BathymetryConfig>
@@ -99,6 +100,10 @@ export function normalizeConfig(raw: object): BathymetryConfig {
       : DEFAULT_CONFIG.autoBackfillWhenEmpty
   config.autoBackfillDays = clamp(config.autoBackfillDays, 1, 31)
   config.autoBackfillDelaySeconds = clamp(config.autoBackfillDelaySeconds, 0, 600)
+  config.csbMetadataArchiveUrl = normalizedHttpUrl(
+    config.csbMetadataArchiveUrl,
+    DEFAULT_CONFIG.csbMetadataArchiveUrl
+  )
   config.changeMinimumPasses = Math.max(1, Math.round(config.changeMinimumPasses))
   config.changeMinimumDays = Math.max(0, config.changeMinimumDays)
   if (config.instrumentMaxM <= config.instrumentMinM) {
@@ -243,7 +248,14 @@ export function pluginSchema(): object {
         600,
         1,
         15
-      )
+      ),
+      csbMetadataArchiveUrl: {
+        type: 'string',
+        title: 'Local NOAA metadata archive URL',
+        description:
+          'Local archive service only. The plugin never calls NOAA Crowbar while serving charts.',
+        default: DEFAULT_CONFIG.csbMetadataArchiveUrl
+      }
     }
   }
 }
@@ -268,6 +280,19 @@ function positive(value: number, fallback: number): number {
 
 function nonNegative(value: number, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function normalizedHttpUrl(value: string, fallback: string): string {
+  try {
+    const url = new URL(typeof value === 'string' ? value.trim() : '')
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return fallback
+    url.pathname = url.pathname.replace(/\/$/, '')
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return fallback
+  }
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
-import { unknownQuality, withCsbMetadata } from './noaa-csb-metadata'
+import { unknownQuality, withLocalCsbMetadata } from './noaa-csb-metadata'
 
 export type Bbox = [number, number, number, number]
 
@@ -463,6 +463,7 @@ export class NoaaCsbImporter {
 
   constructor(
     private readonly store: NoaaCsbStore,
+    private readonly metadataArchiveUrl: string,
     private readonly fetcher: typeof fetch = fetch
   ) {}
 
@@ -503,14 +504,14 @@ export class NoaaCsbImporter {
           cursor += 1
           const discovered = files[index]
           if (!discovered) return
-          if (this.store.hasFile(discovered.name) && this.store.hasFileMetadata(discovered.name)) {
-            this.current.skippedFiles += 1
-            this.current.completedFiles += 1
-            continue
-          }
-          const metadata = await withCsbMetadata(this.fetcher, discovered, signal)
+          const lookup = await withLocalCsbMetadata(
+            this.fetcher, this.metadataArchiveUrl, discovered, signal
+          )
+          const metadata = lookup.file
           if (this.store.hasFile(metadata.name)) {
-            this.store.updateFileMetadata(metadata.name, metadata.quality ?? unknownQuality())
+            // A transient local archive outage must not downgrade previously resolved quality.
+            if (lookup.state !== 'unavailable')
+              this.store.updateFileMetadata(metadata.name, metadata.quality ?? unknownQuality())
             this.current.skippedFiles += 1
             this.current.completedFiles += 1
             continue

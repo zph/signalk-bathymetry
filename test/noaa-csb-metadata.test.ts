@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { qualifyCsbMetadata, withCsbMetadata } from '../src/noaa-csb-metadata'
+import { qualifyCsbMetadata, withLocalCsbMetadata } from '../src/noaa-csb-metadata'
 
 test('qualifies a documented chart-datum reduction for direct fusion', () => {
   const quality = qualifyCsbMetadata({
@@ -23,47 +23,48 @@ test('qualifies a documented chart-datum reduction for direct fusion', () => {
   assert.ok(quality.score >= 0.95)
 })
 
-test('fetches Crowbar metadata by the archive filename and retains its S3 cross-reference', async () => {
+test('fetches metadata only from the local archive by filename', async () => {
   let requested: URL | undefined
   const fetcher: typeof fetch = async (input) => {
     requested = new URL(String(input))
     return Response.json({
-      items: [
-        {
-          traceId: 'trace-1',
-          fileName: '202501010000_boat.tar.gz',
-          lastUpdated: '2026-09-01T00:00:00Z',
-          otherLocations: {
-            s3: 's3://noaa-dcdb-bathymetry-pds/csb/csv/2025/01/01/202501010000_boat_pointData.csv'
-          },
-          metadata: {
-            crs: { vertical: 'Transducer' },
-            time: { startTime: 1735689600000 },
-            platform: {
-              sensors: [{ type: 'Sounder', draft: 0.6 }],
-              correctors: { draftApplied: false }
-            }
-          }
-        }
-      ]
+      source: 'local-archive',
+      fileName: '202501010000_boat.tar.gz',
+      quality: {
+        qualification: 'datum_correctable',
+        score: 0.72,
+        eligibleForDirectFusion: false,
+        depthReference: 'transducer',
+        reasons: ['draft_available_for_application'],
+        rawMetadata: {},
+        traceId: 'trace-1',
+        metadataLastUpdated: '2026-09-01T00:00:00Z',
+        s3Uri: 's3://noaa-dcdb-bathymetry-pds/csb/csv/2025/01/01/202501010000_boat_pointData.csv',
+        sounderDraftM: 0.6,
+        draftApplied: false
+      }
     })
   }
-  const result = await withCsbMetadata(fetcher, {
+  const result = await withLocalCsbMetadata(fetcher, 'http://archive.local:3011', {
     name: '202501010000_boat.tar.gz',
     itemId: 'item',
     platform: 'Boat',
     provider: 'Provider',
     instrument: 'Sounder'
   })
-  assert.equal(requested?.searchParams.get('fileNameEquals'), result.name)
-  assert.equal(result.quality?.qualification, 'datum_correctable')
-  assert.equal(result.quality?.traceId, 'trace-1')
-  assert.match(result.quality?.s3Uri ?? '', /_pointData\.csv$/)
+  assert.equal(requested?.hostname, 'archive.local')
+  assert.equal(requested?.pathname, '/api/crowbar/metadata')
+  assert.equal(requested?.searchParams.get('fileName'), result.file.name)
+  assert.equal(result.state, 'found')
+  assert.equal(result.file.quality?.qualification, 'datum_correctable')
+  assert.equal(result.file.quality?.traceId, 'trace-1')
+  assert.match(result.file.quality?.s3Uri ?? '', /_pointData\.csv$/)
 })
 
-test('metadata network failure is represented as low confidence without blocking soundings', async () => {
-  const result = await withCsbMetadata(
+test('local archive failure is represented as unavailable without blocking soundings', async () => {
+  const result = await withLocalCsbMetadata(
     async () => new Response('down', { status: 503 }),
+    'http://archive.local:3011',
     {
       name: '202501010000_boat.tar.gz',
       itemId: 'item',
@@ -72,7 +73,8 @@ test('metadata network failure is represented as low confidence without blocking
       instrument: 'Sounder'
     }
   )
-  assert.equal(result.quality?.qualification, 'raw_unknown')
-  assert.equal(result.quality?.score, 0.18)
-  assert.match(result.quality?.reasons[0] ?? '', /metadata_fetch_failed/)
+  assert.equal(result.state, 'unavailable')
+  assert.equal(result.file.quality?.qualification, 'raw_unknown')
+  assert.equal(result.file.quality?.score, 0.18)
+  assert.match(result.file.quality?.reasons[0] ?? '', /local_archive_metadata_unavailable/)
 })

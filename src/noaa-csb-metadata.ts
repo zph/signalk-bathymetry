@@ -1,54 +1,87 @@
 import type { CsbFileMetadata, CsbMetadataQuality } from './noaa-csb'
 
-const NOAA_CROWBAR_INDEX =
-  'https://www.ngdc.noaa.gov/ingest-external/index-service/api/v1/csb/index'
-
 type JsonObject = Record<string, unknown>
 type QualificationSource = Pick<
   CsbMetadataQuality,
   'traceId' | 'metadataLastUpdated' | 's3Uri'
 > & { hasTimestamp?: boolean }
 
-/** Fetch the full file-level metadata that NOAA intentionally keeps outside its S3 CSVs. */
-export async function withCsbMetadata(
+export type CsbMetadataLookupState = 'found' | 'missing' | 'unavailable'
+
+export interface CsbMetadataLookupResult {
+  file: CsbFileMetadata
+  state: CsbMetadataLookupState
+}
+
+/** Read file-level quality only from our local archive; never call NOAA Crowbar at render time. */
+export async function withLocalCsbMetadata(
   fetcher: typeof fetch,
+  archiveBaseUrl: string,
   file: CsbFileMetadata,
   signal?: AbortSignal
-): Promise<CsbFileMetadata> {
+): Promise<CsbMetadataLookupResult> {
   try {
-    const query = new URLSearchParams({
-      page: '1',
-      itemsPerPage: '5',
-      order: 'traceId:asc',
-      dataset: 'CSB',
-      fileNameEquals: file.name
-    })
+    const query = new URLSearchParams({ fileName: file.name })
     const response = await fetcher(
-      `${NOAA_CROWBAR_INDEX}?${query}`,
+      `${archiveBaseUrl.replace(/\/$/, '')}/api/crowbar/metadata?${query}`,
       signal ? { signal } : undefined
     )
-    if (!response.ok) throw new Error(`Crowbar returned HTTP ${response.status}`)
-    const body = (await response.json()) as { items?: unknown[] }
-    const candidates = (body.items ?? []).filter(isObject)
-    const item = candidates.find((candidate) => candidate.fileName === file.name)
-    if (!item) return { ...file, quality: unknownQuality('metadata_record_missing') }
-    const rawMetadata = isObject(item.metadata) ? item.metadata : {}
-    const traceId = text(item.traceId)
-    const metadataLastUpdated = text(item.lastUpdated)
-    const s3Uri = isObject(item.otherLocations) ? text(item.otherLocations.s3) : undefined
-    return {
-      ...file,
-      quality: qualifyCsbMetadata(rawMetadata, {
-        ...(traceId === undefined ? {} : { traceId }),
-        ...(metadataLastUpdated === undefined ? {} : { metadataLastUpdated }),
-        ...(s3Uri === undefined ? {} : { s3Uri }),
-        hasTimestamp: item.startTime !== undefined || findValue(rawMetadata, 'startTime') !== undefined
-      })
-    }
+    if (response.status === 404)
+      return {
+        file: { ...file, quality: unknownQuality('local_archive_metadata_missing') },
+        state: 'missing'
+      }
+    if (!response.ok) throw new Error(`local archive returned HTTP ${response.status}`)
+    const body = (await response.json()) as unknown
+    if (!isObject(body) || body.fileName !== file.name || !isObject(body.quality))
+      throw new Error('local archive returned invalid metadata')
+    const quality = archivedQuality(body.quality)
+    return { file: { ...file, quality }, state: 'found' }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    return { ...file, quality: unknownQuality(`metadata_fetch_failed:${detail}`) }
+    return {
+      file: { ...file, quality: unknownQuality(`local_archive_metadata_unavailable:${detail}`) },
+      state: 'unavailable'
+    }
   }
+}
+
+function archivedQuality(value: JsonObject): CsbMetadataQuality {
+  const qualification = text(value.qualification)
+  if (!qualification || ![
+    'datum_corrected', 'datum_correctable', 'surface_resolved', 'reference_known', 'raw_unknown'
+  ].includes(qualification)) throw new Error('local archive returned invalid qualification')
+  const score = finiteNumber(value.score)
+  if (score === undefined || score < 0 || score > 1)
+    throw new Error('local archive returned invalid quality score')
+  const reasons = Array.isArray(value.reasons)
+    ? value.reasons.filter((reason): reason is string => typeof reason === 'string')
+    : []
+  const result: CsbMetadataQuality = {
+    qualification: qualification as CsbMetadataQuality['qualification'],
+    score,
+    eligibleForDirectFusion: value.eligibleForDirectFusion === true,
+    depthReference: text(value.depthReference) ?? 'raw-observed-datum-unknown',
+    reasons,
+    rawMetadata: isObject(value.rawMetadata) ? value.rawMetadata : {}
+  }
+  for (const key of ['traceId', 'metadataLastUpdated', 's3Uri'] as const) {
+    const candidate = text(value[key])
+    if (candidate !== undefined) result[key] = candidate
+  }
+  const sounderDraftM = finiteNumber(value.sounderDraftM)
+  if (sounderDraftM !== undefined) result.sounderDraftM = sounderDraftM
+  for (const key of [
+    'draftApplied', 'soundSpeedDocumented', 'positionOffsetsDocumented', 'motionOffsetsApplied'
+  ] as const) {
+    if (typeof value[key] === 'boolean') result[key] = value[key]
+  }
+  const verticalReductionReference = text(value.verticalReductionReference)
+  const verticalReductionMethod = text(value.verticalReductionMethod)
+  if (verticalReductionReference !== undefined)
+    result.verticalReductionReference = verticalReductionReference
+  if (verticalReductionMethod !== undefined) result.verticalReductionMethod = verticalReductionMethod
+  return result
 }
 
 export function qualifyCsbMetadata(

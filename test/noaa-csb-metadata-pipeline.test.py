@@ -2,6 +2,7 @@ import gzip
 import importlib.util
 import json
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,6 +103,39 @@ class MetadataNormalizationTest(unittest.TestCase):
         self.assertEqual(row["collection_year"], 2025)
         self.assertEqual(row["size"], 1234)
         self.assertEqual(row["etag"], "abcdef")
+
+    def test_operational_lookup_indexes_pages_and_keeps_latest_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page = root / "page-0000001.jsonl.gz"
+            older = PIPELINE.normalize_record(
+                {
+                    "traceId": "trace-1",
+                    "fileName": "20250101_boat.tar.gz",
+                    "lastUpdated": "2026-01-01T00:00:00Z",
+                    "metadata": {"crs": {"vertical": "Waterline"}},
+                },
+                "2026-09-15T00:00:00Z",
+            )
+            with gzip.open(page, "wt", encoding="utf-8") as handle:
+                handle.write(json.dumps(older) + "\n")
+            index = PIPELINE.MetadataLookupIndex(root / "metadata-lookup.sqlite")
+            self.assertEqual(index.index_page("run-1", 1, page), 1)
+            self.assertEqual(index.index_page("run-1", 1, page), 0)
+
+            newer = {**older, "last_updated": "2026-02-01T00:00:00Z",
+                     "qualification": "datum_corrected",
+                     "eligible_for_direct_fusion": True}
+            page2 = root / "page-0000002.jsonl.gz"
+            with gzip.open(page2, "wt", encoding="utf-8") as handle:
+                handle.write(json.dumps(newer) + "\n")
+            index.index_page("run-2", 1, page2)
+            with sqlite3.connect(index.path) as connection:
+                row = connection.execute(
+                    "SELECT qualification,eligible_for_direct_fusion FROM metadata_records "
+                    "WHERE file_name=?", ("20250101_boat.tar.gz",)
+                ).fetchone()
+            self.assertEqual(row, ("datum_corrected", 1))
 
 
 class ParquetBuildTest(unittest.TestCase):
