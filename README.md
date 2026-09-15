@@ -153,8 +153,7 @@ accepts `vessel`, `journey`, and an optional `after` cursor and returns up to
 same read access as the depth layer. The explorer reads cached data only.
 
 Enable **NOAA Crowdsourced Bathymetry** in Binnacle's chart list and expand its
-child layers. **Coverage** shows translucent red haze below zoom 9, including at
-world zoom. **Tracks** shows the finer indexed survey paths at every zoom. Their
+child layers. **Tracks** shows the indexed survey paths at every zoom. Their
 rendered strokes progressively taper from 1.5 at zoom 9 to 0.6 at zoom 15 and
 closer, keeping the overlay from overpowering chart detail as you zoom in. The
 footprint is NOAA's indexed track coverage, not depth, a safety boundary, or proof
@@ -179,7 +178,7 @@ Older viewport-clipped cache entries are downloaded again on demand. Automatic
 imports are bounded to 50 files per area and 64 MB per file; use the manual importer
 for denser areas. `/csb/status` reports pending viewport areas and download errors.
 Zoomed-out coverage never triggers bulk depth downloads. The parent layer is disabled
-by default, with all four facets selected for when it is enabled. Each facet has
+by default, with all three facets selected for when it is enabled. Each facet has
 independent visibility and opacity under the master layer. Binnacle migrates the old
 two-layer device settings to these facets, preserving hidden depths and existing opacity.
 Other chart clients can still consume the sounding vector tile URL directly.

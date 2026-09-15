@@ -75,7 +75,7 @@ async function noaaCsbChartResource(config: BathymetryConfig): Promise<Record<st
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',
     description:
-      'Coverage haze, indexed survey tracks, generalized nautical lanes, downloaded depth observations, and approximate depth-colored contours in one layer. Expand the layer to select Coverage, Tracks, Nautical lanes, and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
+      'Indexed survey tracks, generalized nautical lanes, downloaded depth observations, and approximate depth-colored contours in one layer. Expand the layer to select Tracks, Nautical lanes, and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
     type: 'S-57',
     format: 'pbf',
     chartFormat: 'pbf',
