@@ -6,7 +6,7 @@ import { mercatorToLonLat, tileMercatorBounds } from './geo'
 const DAY = 86_400_000
 const MAX_FILES = 50
 export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v3'
-export const NOAA_CSB_LANES_STYLE_REVISION = 'nautical-lanes-v1'
+export const NOAA_CSB_LANES_STYLE_REVISION = 'nautical-lanes-v2'
 
 /** Keep detailed survey tracks from growing visually dominant at close chart zooms. */
 export function coverageStrokeWidth(z: number): number {
@@ -69,20 +69,20 @@ export function nauticalLanesUrl(z: number, x: number, y: number): string {
     format: 'png32',
     transparent: 'true',
     dynamicLayers: JSON.stringify([
-      laneLayer(10, [150, 20, 45, 24], laneShoulderWidth(z)),
-      laneLayer(11, [150, 20, 45, 86], laneCoreWidth(z))
+      laneLayer(10, [150, 20, 45, 14], laneShoulderWidth(z)),
+      laneLayer(11, [150, 20, 45, 45], laneCoreWidth(z))
     ])
   })
   return `https://gis.ngdc.noaa.gov/arcgis/rest/services/csb/MapServer/export?${query}`
 }
 
 export function laneShoulderWidth(z: number): number {
-  if (z < 5) return 2.4
-  return Math.max(0.9, 2.4 - (z - 4) * 0.15)
+  if (z < 5) return 1
+  return Math.max(0.45, 1 - (z - 4) * 0.08)
 }
 
 export function laneCoreWidth(z: number): number {
-  return Math.max(0.35, laneShoulderWidth(z) * 0.28)
+  return Math.max(0.2, laneShoulderWidth(z) * 0.28)
 }
 
 function laneLayer(id: number, color: [number, number, number, number], width: number) {

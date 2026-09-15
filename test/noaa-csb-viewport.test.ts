@@ -75,12 +75,12 @@ test('nautical lanes compound repeated activities into stronger corridor shoulde
   const layers = JSON.parse(url.searchParams.get('dynamicLayers')!)
   assert.equal(layers.length, 2)
   assert.deepEqual(layers[0].source, { type: 'mapLayer', mapLayerId: 1 })
-  assert.deepEqual(layers[0].drawingInfo.renderer.symbol.color, [150, 20, 45, 24])
-  assert.deepEqual(layers[1].drawingInfo.renderer.symbol.color, [150, 20, 45, 86])
+  assert.deepEqual(layers[0].drawingInfo.renderer.symbol.color, [150, 20, 45, 14])
+  assert.deepEqual(layers[1].drawingInfo.renderer.symbol.color, [150, 20, 45, 45])
   assert.ok(layers[0].drawingInfo.renderer.symbol.width > layers[1].drawingInfo.renderer.symbol.width)
-  assert.equal(laneShoulderWidth(4), 2.4)
-  assert.equal(laneShoulderWidth(20), 0.9)
-  assert.equal(laneCoreWidth(20), 0.35)
+  assert.equal(laneShoulderWidth(4), 1)
+  assert.equal(laneShoulderWidth(20), 0.45)
+  assert.equal(laneCoreWidth(20), 0.2)
 })
 
 test('nautical lane tiles coalesce and persist independently of coverage', async (t) => {
