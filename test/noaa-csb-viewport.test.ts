@@ -13,6 +13,8 @@ import {
 } from '../src/noaa-csb-viewport'
 import {
   encodeNauticalLaneVectors,
+  nauticalLaneDetail,
+  simplifyLine,
   nauticalLaneVectorUrl,
   NOAA_CSB_LANES_VECTOR_REVISION
 } from '../src/noaa-csb-lanes'
@@ -174,6 +176,13 @@ test('nautical lane vector tiles coalesce and persist on disk', async (t) => {
   const restarted = new NoaaCsbViewport(store, dir, fetcher)
   await restarted.nauticalLaneVectors(11, 327, 791)
   assert.equal(calls, 1)
+  // Child tiles must have independent cache entries rather than reusing a Z11 parent.
+  for (const z of [10, 12, 13]) {
+    await Promise.all(Array.from({ length: 4 }, () => service.nauticalLaneVectors(z, 327, 791)))
+  }
+  assert.equal(calls, 4)
+  for (const z of [10, 12, 13]) await restarted.nauticalLaneVectors(z, 327, 791)
+  assert.equal(calls, 4)
   service.stop()
   restarted.stop()
 })
@@ -273,3 +282,99 @@ test('a pre-revision coverage tile remains an outage-only fallback', async (t) =
   assert.equal(calls, 1)
   service.stop()
 })
+
+
+test('native zooms progressively refine quantization and bound their vertex budgets', () => {
+  let priorTolerance = Infinity
+  let priorBudget = 0
+  for (let z = 10; z <= 13; z++) {
+    const url = new URL(nauticalLaneVectorUrl(z, 0, 0))
+    const quantization = JSON.parse(url.searchParams.get('quantizationParameters')!)
+    assert.ok(quantization.tolerance < priorTolerance)
+    priorTolerance = quantization.tolerance
+    const detail = nauticalLaneDetail(z)
+    assert.ok(detail.vertices > priorBudget)
+    assert.ok(detail.vertices <= 16_000)
+    priorBudget = detail.vertices
+  }
+  assert.throws(() => nauticalLaneVectorUrl(14, 0, 0))
+})
+
+test('finer geometry retains small bends, endpoints, and removes straight-line redundancy', () => {
+  const bend = [{ x: 0, y: 0 }, { x: 100, y: 12 }, { x: 200, y: 0 }]
+  assert.deepEqual(simplifyLine(bend, nauticalLaneDetail(10).tolerance), [bend[0], bend[2]])
+  assert.deepEqual(simplifyLine(bend, nauticalLaneDetail(12).tolerance), bend)
+  const smallBend = [{ x: 0, y: 0 }, { x: 100, y: 6 }, { x: 200, y: 0 }]
+  assert.equal(simplifyLine(smallBend, nauticalLaneDetail(12).tolerance).length, 2)
+  assert.deepEqual(simplifyLine(smallBend, nauticalLaneDetail(13).tolerance), smallBend)
+  assert.deepEqual(simplifyLine([{x: 0,y: 0}, {x: 100,y: 0}, {x: 200,y: 0}], 4),
+    [{x: 0,y: 0}, {x: 200,y: 0}])
+})
+
+
+test('dense native tiles remain inside their per-zoom encoded vertex limits', () => {
+  for (const z of [10, 11, 12, 13]) {
+    const quantization = JSON.parse(new URL(nauticalLaneVectorUrl(z, 327, 791))
+      .searchParams.get('quantizationParameters')!)
+    const tile = encodeNauticalLaneVectors({
+      transform: {
+        originPosition: 'upperLeft',
+        scale: [quantization.tolerance, quantization.tolerance],
+        translate: [quantization.extent.xmin, quantization.extent.ymax]
+      },
+      features: Array.from({ length: 500 }, (_, id) => ({
+        attributes: { OBJECTID: id },
+        geometry: { paths: [Array.from({ length: 80 }, (_, index) =>
+          index === 0 ? [5, 20] : [2, index % 2 ? 12 : -12])] }
+      }))
+    }, z, 327, 791)
+    const vertices = countTileVertices(tile)
+    assert.ok(vertices > 0)
+    assert.ok(vertices <= nauticalLaneDetail(z).vertices, `${z}: ${vertices} vertices`)
+  }
+})
+
+// Decode MVT geometry commands so this assertion checks the actual wire output.
+function countTileVertices(tile: Buffer): number {
+  function varint(data: Buffer, cursor: { offset: number }): number {
+    let result = 0
+    let shift = 0
+    for (;;) {
+      const byte = data[cursor.offset++]!
+      result += (byte & 127) * 2 ** shift
+      if (!(byte & 128)) return result
+      shift += 7
+    }
+  }
+  function fields(data: Buffer, wanted: number): Buffer[] {
+    const result: Buffer[] = []
+    const cursor = { offset: 0 }
+    while (cursor.offset < data.length) {
+      const tag = varint(data, cursor)
+      const wire = tag & 7
+      if (wire === 0) varint(data, cursor)
+      else if (wire === 2) {
+        const length = varint(data, cursor)
+        if (tag >> 3 === wanted) result.push(data.subarray(cursor.offset, cursor.offset + length))
+        cursor.offset += length
+      } else throw new Error(`Unexpected MVT wire type ${wire}`)
+    }
+    return result
+  }
+  let total = 0
+  for (const layer of fields(tile, 3)) {
+    for (const feature of fields(layer, 2)) {
+      for (const geometry of fields(feature, 4)) {
+        const cursor = { offset: 0 }
+        while (cursor.offset < geometry.length) {
+          const command = varint(geometry, cursor)
+          const count = command >> 3
+          if ((command & 7) === 7) continue
+          total += count
+          for (let index = 0; index < count * 2; index++) varint(geometry, cursor)
+        }
+      }
+    }
+  }
+  return total
+}

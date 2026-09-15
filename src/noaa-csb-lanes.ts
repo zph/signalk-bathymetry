@@ -4,10 +4,22 @@ import { encodeTrackLineTile, type VectorLineFeature } from './vector-tiles'
 const MVT_EXTENT = 4096
 const TILE_BUFFER = 64
 const MAX_ROUTES = 500
-const MAX_VERTICES = 6_000
+// Tile-local tolerances shrink as native tiles get closer to the observations.
+export function nauticalLaneDetail(zoom: number) {
+  const levels = [
+    { grid: 256, tolerance: 24, vertices: 6_000 },
+    { grid: 512, tolerance: 16, vertices: 8_000 },
+    { grid: 1024, tolerance: 8, vertices: 12_000 },
+    { grid: 2048, tolerance: 4, vertices: 16_000 }
+  ]
+  if (!Number.isInteger(zoom) || zoom < 10 || zoom > 13) {
+    throw new Error('NOAA generalized vectors require zoom 10 through 13')
+  }
+  return levels[zoom - 10]!
+}
 const NOAA_LINES = 'https://gis.ngdc.noaa.gov/arcgis/rest/services/csb/MapServer/1/query'
 
-export const NOAA_CSB_LANES_VECTOR_REVISION = 'nautical-lanes-vector-v1'
+export const NOAA_CSB_LANES_VECTOR_REVISION = 'nautical-lanes-vector-v2'
 
 interface QuantizedTrackResponse {
   error?: { message?: string }
@@ -24,6 +36,7 @@ interface QuantizedTrackResponse {
 
 /** Ask NOAA for a bounded sample of already-generalized journey vectors, not sounding points. */
 export function nauticalLaneVectorUrl(z: number, x: number, y: number): string {
+  const detail = nauticalLaneDetail(z)
   const mercator = tileMercatorBounds(z, x, y)
   const southwest = mercatorToLonLat(mercator.minX, mercator.minY)
   const northeast = mercatorToLonLat(mercator.maxX, mercator.maxY)
@@ -33,7 +46,7 @@ export function nauticalLaneVectorUrl(z: number, x: number, y: number): string {
     northeast.longitude,
     northeast.latitude
   ]
-  const tolerance = Math.max(bounds[2] - bounds[0], bounds[3] - bounds[1]) / 192
+  const tolerance = Math.max(bounds[2] - bounds[0], bounds[3] - bounds[1]) / detail.grid
   const query = new URLSearchParams({
     f: 'json',
     where: '1=1',
@@ -69,6 +82,7 @@ export function encodeNauticalLaneVectors(
   x: number,
   y: number
 ): Buffer {
+  const detail = nauticalLaneDetail(z)
   if (response.error) throw new Error(response.error.message || 'NOAA vector query failed')
   const transform = response.transform
   if (!transform?.scale || !transform.translate || transform.originPosition !== 'upperLeft') {
@@ -93,12 +107,12 @@ export function encodeNauticalLaneVectors(
             CSB_GENERALIZED: true,
             CSB_NOT_FOR_NAVIGATION: true
           },
-          line: simplifyLine(clipped)
+          line: simplifyLine(clipped, detail.tolerance)
         })
       }
     }
   }
-  return encodeTrackLineTile(limitVertices(features))
+  return encodeTrackLineTile(limitVertices(features, detail.vertices))
 }
 
 function decodePath(
@@ -180,25 +194,50 @@ function clipSegment(
   ]
 }
 
-function simplifyLine(line: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
-  const result = [line[0]!]
-  for (let index = 1; index < line.length - 1; index += 1) {
-    const previous = result.at(-1)!
-    const point = line[index]!
-    if (Math.hypot(point.x - previous.x, point.y - previous.y) >= 24) result.push(point)
+// Douglas-Peucker preserves bends by bounding perpendicular error, rather than
+// discarding a bend simply because it is close to the preceding retained point.
+export function simplifyLine(
+  line: Array<{ x: number; y: number }>,
+  tolerance: number
+): Array<{ x: number; y: number }> {
+  if (line.length <= 2) return line
+  const keep = new Set([0, line.length - 1])
+  const pending: Array<[number, number]> = [[0, line.length - 1]]
+  while (pending.length) {
+    const [first, last] = pending.pop()!
+    const start = line[first]!
+    const end = line[last]!
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const lengthSquared = dx * dx + dy * dy
+    let greatest = tolerance * tolerance
+    let selected = -1
+    for (let index = first + 1; index < last; index++) {
+      const point = line[index]!
+      const fraction = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
+        ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+      const error = (point.x - start.x - fraction * dx) ** 2 +
+        (point.y - start.y - fraction * dy) ** 2
+      if (error > greatest) {
+        greatest = error
+        selected = index
+      }
+    }
+    if (selected !== -1) {
+      keep.add(selected)
+      pending.push([first, selected], [selected, last])
+    }
   }
-  const last = line.at(-1)!
-  if (result.at(-1)!.x !== last.x || result.at(-1)!.y !== last.y) result.push(last)
-  return result
+  return [...keep].sort((a, b) => a - b).map((index) => line[index]!)
 }
 
-function limitVertices(features: VectorLineFeature[]): VectorLineFeature[] {
+function limitVertices(features: VectorLineFeature[], maxVertices: number): VectorLineFeature[] {
   return features
     .filter((feature) => feature.line.length >= 2)
     .map((feature) => ({ feature, length: lineLength(feature.line) }))
     .sort((left, right) => right.length - left.length)
     .reduce<{ features: VectorLineFeature[]; vertices: number }>((result, entry) => {
-      if (result.vertices + entry.feature.line.length <= MAX_VERTICES) {
+      if (result.vertices + entry.feature.line.length <= maxVertices) {
         result.features.push(entry.feature)
         result.vertices += entry.feature.line.length
       }

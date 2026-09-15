@@ -156,13 +156,15 @@ Enable **NOAA Crowdsourced Bathymetry** in Binnacle's chart list and expand its
 child layers. **Tracks** generalizes NOAA journeys into a traffic-awareness
 portrayal at every zoom. Each path has an opaque light shoulder and an opaque dark
 core. The facet opacity control changes the complete rendering instead of baking
-transparency into individual tracks. Zoomed-out tiles trade path precision for a
-clear regional trajectory view through zoom 11. At zoom 12 and closer, the same
-facet switches to screen-simplified journey lines generated from locally served
-observations. This avoids repeated close-zoom image rendering by NOAA. These are
-not regulated shipping lanes or collision-avoidance instructions. PNG tiles use
-the ordinary chart tile cache, a bounded 32 MB memory cache, and a one-day server
-disk cache, with cached fallback during upstream outages.
+transparency into individual tracks. Below zoom 10, raster tiles provide a distant
+regional overview. Zooms 10 through 13 request native vector tiles at each zoom,
+with progressively finer quantization and bend-preserving simplification. Their
+vertex budgets are 6,000, 8,000, 12,000, and 16,000 vertices per tile, respectively.
+At zoom 14 and closer, the facet uses detailed journey lines from locally served
+observations. These are not regulated shipping lanes or collision-avoidance
+instructions. Tile requests are coalesced and cached by zoom and coordinates,
+with a bounded 32 MB memory cache and one-day server disk cache. Geometry revisions
+invalidate old vector caches; cached tiles remain available during upstream outages.
 
 Enable the **Depths** facet to automatically download observations
 when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by

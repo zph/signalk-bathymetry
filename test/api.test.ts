@@ -27,20 +27,24 @@ test('cached NOAA depths remain available during discovery outages', async () =>
   }
 })
 
-test('generalized NOAA lane vectors are served as cacheable MVT', async () => {
+test('native NOAA vector zooms are served independently and reject out-of-range zooms', async () => {
+  const calls: number[] = []
   const tile = Buffer.from('vector tile')
   const runtime = {
-    csbViewport: { nauticalLaneVectors: async () => tile }
+    csbViewport: { nauticalLaneVectors: async (z: number) => { calls.push(z); return tile } }
   } as unknown as Runtime
-  const result = fakeResponse()
-  await tileHandler(runtime, '/csb/nautical-lanes-vector/:z/:x/:y.pbf')(
-    fakeRequest({}, { z: '11', x: '327', y: '791' }),
-    result.response
-  )
-  assert.equal(result.status(), 200)
-  assert.equal(result.headers.get('Content-Type'), 'application/vnd.mapbox-vector-tile')
-  assert.equal(result.headers.get('Cache-Control'), 'private, max-age=86400, immutable')
-  assert.deepEqual(result.body(), tile)
+  for (const z of [9, 10, 11, 12, 13, 14]) {
+    const result = fakeResponse()
+    await tileHandler(runtime, '/csb/nautical-lanes-vector/:z/:x/:y.pbf')(
+      fakeRequest({}, { z: String(z), x: '327', y: '791' }), result.response)
+    assert.equal(result.status(), z >= 10 && z <= 13 ? 200 : 400)
+    if (result.status() === 200) {
+      assert.equal(result.headers.get('Content-Type'), 'application/vnd.mapbox-vector-tile')
+      assert.equal(result.headers.get('Cache-Control'), 'private, max-age=86400, immutable')
+      assert.deepEqual(result.body(), tile)
+    }
+  }
+  assert.deepEqual(calls, [10, 11, 12, 13])
 })
 
 function tileHandler(runtime: Runtime, route = '/tiles/:z/:x/:y.pbf'): Handler {

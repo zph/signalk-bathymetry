@@ -249,7 +249,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
     try {
-      const z = integerParam(request, 'z', 10, 11)
+      const z = integerParam(request, 'z', 10, 13)
       const x = integerParam(request, 'x', 0, 2 ** z - 1)
       const y = integerParam(request, 'y', 0, 2 ** z - 1, '.pbf')
       const tile = await runtime.csbViewport.nauticalLaneVectors(z, x, y)
