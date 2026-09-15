@@ -241,8 +241,13 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
         const archiveUrl = process.env.NOAA_CSB_ARCHIVE_URL || 'http://127.0.0.1:3011'
         try {
           const local = await fetch(`${archiveUrl.replace(/\/$/, '')}/api/soundings/${z}/${x}/${y}.json`, {
-            signal: AbortSignal.timeout(25_000)
+            signal: AbortSignal.timeout(115_000)
           })
+          if (local.status === 503 || local.status === 429) {
+            response.set('Retry-After', '2')
+            response.status(503).json({ error: 'Local sounding query busy; retry shortly' })
+            return
+          }
           if (!local.ok) throw new Error(`Archive returned ${local.status}`)
           const body = await local.json() as { soundings: import('./noaa-csb').CsbSounding[] }
           if (!Array.isArray(body.soundings)) throw new Error('Invalid archive response')
