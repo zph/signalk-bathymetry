@@ -30,15 +30,16 @@ export function observedContours(
   x: number,
   y: number
 ): CsbContour[] {
-  if (z < 12 || soundings.length < 2) return []
+  if (z < 8 || soundings.length < 2) return []
 
   const bounds = tileMercatorBounds(z, x, y)
   const span = bounds.maxX - bounds.minX
-  const steps = z >= 16 ? 32 : z >= 14 ? 24 : 16
+  const steps = z < 12 ? 64 : z >= 16 ? 32 : z >= 14 ? 24 : 16
   const cellMeters = span / steps
   // At wide zoom the interpolation may bridge a modest gap in a survey line. At close zoom it
   // tightens with the map scale, and never invents a surface more than two grid cells from evidence.
-  const radiusMeters = cellMeters * 2
+  const radiusMeters = Math.min(cellMeters * 2, 3000)
+  const levels = z < 12 ? [10, 20, 50, 100, 200, 500, 1000, 2000, 4000] : CONTOUR_LEVELS_M
   const bucketMeters = radiusMeters
   const samples: Sample[] = soundings.map((sounding) => {
     const point = lonLatToMercator(sounding)
@@ -74,7 +75,7 @@ export function observedContours(
       const depths = corners as number[]
       const minimum = Math.min(...depths)
       const maximum = Math.max(...depths)
-      for (const depth of CONTOUR_LEVELS_M) {
+      for (const depth of levels) {
         if (depth <= minimum || depth > maximum) continue
         const crossings = cellCrossings(gx, gy, steps, depths, depth)
         if (crossings.length === 2) {

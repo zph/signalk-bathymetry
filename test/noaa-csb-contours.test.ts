@@ -37,7 +37,19 @@ test('bounded interpolation derives contours from sparse vessel tracks at region
 test('contours stay disabled at world zoom and require multiple observations', () => {
   const point = sounding(0, 0, 5, 'one')
   assert.equal(observedContours([point], 15, 16384, 16383).length, 0)
-  assert.equal(observedContours([point, sounding(10, 0, 10, 'two')], 11, 1024, 1023).length, 0)
+  assert.equal(observedContours([point, sounding(10, 0, 10, 'two')], 7, 64, 63).length, 0)
+})
+
+test('overview contours retain observed underwater shape through zoom eight', () => {
+  for (const z of [8, 9, 10, 11]) {
+    const bounds = tileMercatorBounds(z, 2 ** (z - 1), 2 ** (z - 1))
+    const span = bounds.maxX - bounds.minX
+    const points = Array.from({length: 129}, (_, i) => sounding(
+      bounds.minX + span * i / 128, bounds.maxY - span / 2, 2 + i, String(i)))
+    const contours = observedContours(points, z, 2 ** (z - 1), 2 ** (z - 1))
+    assert.ok(contours.length > 0, `zoom ${z}`)
+    assert.ok(contours.every(c => c.interpolationRadiusM <= 3000))
+  }
 })
 
 test('bounded interpolation does not bridge distant observations', () => {
