@@ -13,6 +13,23 @@ import {
 import { NoaaCsbTileRenderer } from '../src/noaa-csb-tiles'
 import { encodeSoundingPointTile } from '../src/vector-tiles'
 
+test('labels select shallowest neighbors and reveal more observations as zoom increases', () => {
+  const points = Array.from({length:12},(_,i) => ({uniqueId:String(i),fileUuid:'f',
+    longitude:.001+i*.00001,latitude:.001,depthM:i===0?3.25:20,observedAtMs:i,
+    platform:i===0?'SHALLOW':'DEEP',provider:'test',instrument:''}))
+  const renderer = new NoaaCsbTileRenderer({} as NoaaCsbStore)
+  const lowTile=tileForPosition(.001,.001,14)
+  const highTile=tileForPosition(.001,.001,18)
+  const low=renderer.render(14,lowTile.x,lowTile.y,points)
+  const high=renderer.render(18,highTile.x,highTile.y,points)
+  assert.equal(low.pointCount,1)
+  assert.ok(high.pointCount>low.pointCount)
+  assert.ok(low.tile.includes(Buffer.from('SHALLOW')))
+  assert.ok(!low.tile.includes(Buffer.from('DEEP')))
+  assert.ok(low.tile.includes(Buffer.from('TRACKPOINT')))
+  assert.equal(low.soundingCount,points.length)
+})
+
 test('dense sounding tiles do not exceed the JavaScript argument stack', () => {
   const tile = encodeSoundingPointTile(
     Array.from({ length: 12000 }, (_, i) => ({

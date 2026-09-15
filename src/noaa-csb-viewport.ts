@@ -5,11 +5,11 @@ import { mercatorToLonLat, tileMercatorBounds } from './geo'
 
 const DAY = 86_400_000
 const MAX_FILES = 50
-export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v2'
+export const NOAA_CSB_COVERAGE_STYLE_REVISION = 'tracks-v3'
 
 /** Keep detailed survey tracks from growing visually dominant at close chart zooms. */
 export function coverageStrokeWidth(z: number): number {
-  if (z < 9) return 4
+  if (z < 9) return 0.65
   return Math.max(60, 150 - (z - 9) * 15) / 100
 }
 
@@ -40,7 +40,7 @@ export function coverageUrl(z: number, x: number, y: number): string {
             symbol: {
               type: 'esriSLS',
               style: 'esriSLSSolid',
-              color: [220, 25, 35, z < 9 ? 80 : 160],
+              color: [220, 25, 35, 180],
               width: coverageStrokeWidth(z)
             }
           }

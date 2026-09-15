@@ -21,6 +21,8 @@ export interface CsbSounding {
   longitude: number
   latitude: number
   depthM: number
+  sampleCount?: number
+  maxDepthM?: number
   observedAtMs: number
   platform: string
   provider: string

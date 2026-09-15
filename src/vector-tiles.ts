@@ -130,12 +130,12 @@ export interface VectorPointFeature {
   point: { x: number; y: number }
 }
 
-export function encodeSoundingPointTile(features: readonly VectorPointFeature[]): Buffer {
+export function encodeSoundingPointTile(features: readonly VectorPointFeature[], layerName = BATHYMETRY_MVT_SOUNDINGS_LAYER): Buffer {
   const tile = new ProtoWriter()
   tile.bytesField(
     3,
     encodeLayer(
-      BATHYMETRY_MVT_SOUNDINGS_LAYER,
+      layerName,
       features.map((feature) => ({ ...feature, ring: [] })),
       'point'
     )
@@ -143,11 +143,13 @@ export function encodeSoundingPointTile(features: readonly VectorPointFeature[])
   return tile.finish()
 }
 
-export function encodeDepthContourTile(features: Array<{ring: Array<{x:number;y:number}>; depth:number}>): Buffer {
+export function encodeDepthContourTile(features: Array<{ring: Array<{x:number;y:number}>; depth:number; interpolationRadiusM?:number}>): Buffer {
   const tile = new ProtoWriter()
   tile.bytesField(3, encodeLayer('DEPCNT', features.map(f => ({
     ring:f.ring, point:f.ring[0]!, properties:{VALDCO:f.depth, BATHY_DATUM:'UNKNOWN',
-      CSB_DERIVED:true, CSB_NOT_FOR_NAVIGATION:true, BATHYMETRY_PROVIDER:'noaa-csb'}
+      CSB_DERIVED:true, CSB_CONTOUR_METHOD:'bounded-idw',
+      CSB_INTERPOLATION_RADIUS_M:f.interpolationRadiusM ?? 0,
+      CSB_NOT_FOR_NAVIGATION:true, BATHYMETRY_PROVIDER:'noaa-csb'}
   })), 'line'))
   return tile.finish()
 }

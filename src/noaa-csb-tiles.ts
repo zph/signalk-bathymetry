@@ -8,7 +8,7 @@ const EARTH_CIRCUMFERENCE_M = 40_075_016.686
 const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-mvt1'
+export const NOAA_CSB_MVT_REVISION = 'csb-mvt2'
 
 export interface RenderedCsbTile {
   tile: Buffer
@@ -33,7 +33,7 @@ export class NoaaCsbTileRenderer {
   render(z: number, x: number, y: number, archiveSoundings?: CsbSounding[]): RenderedCsbTile {
     const cellMeters = Math.max(
       MIN_DISPLAY_CELL_M,
-      (EARTH_CIRCUMFERENCE_M / 2 ** z / 256) * 2
+      (EARTH_CIRCUMFERENCE_M / 2 ** z / 256) * 16
     )
     if (z < this.minZoom || z > this.maxZoom) {
       return {
@@ -54,12 +54,13 @@ export class NoaaCsbTileRenderer {
     const span = bounds.maxX - bounds.minX
     const features = aggregates.map((aggregate) => {
       const depths = aggregate.samples.map((sample) => sample.depthM).sort((a, b) => a - b)
-      const representative = aggregate.samples[Math.floor(aggregate.samples.length / 2)]!
-      const depthM = median(depths)
+      const representative = aggregate.samples.reduce((a,b) => a.depthM <= b.depthM ? a : b)
+      const depthM = representative.depthM
+      const position = lonLatToMercator(representative)
       return {
         point: {
-          x: Math.round(((aggregate.x - bounds.minX) / span) * MVT_EXTENT),
-          y: Math.round(((bounds.maxY - aggregate.y) / span) * MVT_EXTENT)
+          x: Math.round(((position.x - bounds.minX) / span) * MVT_EXTENT),
+          y: Math.round(((bounds.maxY - position.y) / span) * MVT_EXTENT)
         },
         properties: {
           DEPTH: depthM,
@@ -70,9 +71,9 @@ export class NoaaCsbTileRenderer {
           BATHY_LABEL: depthM >= 10 ? Math.floor(depthM).toFixed(0) : depthM.toFixed(1),
           BATHY_LABEL_UNIT: 'm',
           BATHY_CONFIDENCE: 0.2,
-          BATHY_SOUNDING_COUNT: aggregate.samples.length,
+          BATHY_SOUNDING_COUNT: aggregate.samples.reduce((n,s) => n + (s.sampleCount ?? 1),0),
           CSB_MIN_DEPTH_M: depths[0]!,
-          CSB_MAX_DEPTH_M: depths[depths.length - 1]!,
+          CSB_MAX_DEPTH_M: aggregate.samples.reduce((n,s) => Math.max(n,s.maxDepthM ?? s.depthM),depthM),
           CSB_OBSERVED_AT_MS: representative.observedAtMs,
           CSB_PLATFORM: representative.platform,
           CSB_PROVIDER: representative.provider,
@@ -83,7 +84,12 @@ export class NoaaCsbTileRenderer {
       }
     })
     return {
-      tile: Buffer.concat([encodeSoundingPointTile(features),encodeDepthContourTile(observedContours(soundings,z,x,y))]),
+      tile: Buffer.concat([encodeSoundingPointTile(features),
+        encodeSoundingPointTile(soundings.map(s => {
+          const p=lonLatToMercator(s)
+          return {point:{x:Math.round((p.x-bounds.minX)/span*MVT_EXTENT),
+            y:Math.round((bounds.maxY-p.y)/span*MVT_EXTENT)},properties:{}}
+        }),'TRACKPOINT'),encodeDepthContourTile(observedContours(soundings,z,x,y))]),
       soundingCount: soundings.length,
       pointCount: features.length,
       cellMeters
@@ -104,10 +110,4 @@ function aggregateSoundings(soundings: readonly CsbSounding[], cellMeters: numbe
     } else cells.set(key, { samples: [sounding], x: point.x, y: point.y })
   }
   return [...cells.values()]
-}
-
-function median(sorted: readonly number[]): number {
-  const middle = Math.floor(sorted.length / 2)
-  if (sorted.length % 2 === 1) return sorted[middle]!
-  return (sorted[middle - 1]! + sorted[middle]!) / 2
 }

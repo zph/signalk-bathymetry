@@ -49,13 +49,13 @@ test('coverage export is global, translucent red, and independent of feature que
   assert.match(url.pathname, /MapServer\/export$/)
   assert.equal(url.searchParams.get('bbox')?.split(',')[0], '-180')
   const style = JSON.parse(url.searchParams.get('dynamicLayers')!)
-  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 80])
-  assert.equal(style[0].drawingInfo.renderer.symbol.width, 4)
+  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 180])
+  assert.equal(style[0].drawingInfo.renderer.symbol.width, 0.65)
   assert.equal(url.searchParams.get('transparent'), 'true')
 })
 
 test('coverage survey tracks taper at close zoom without becoming illegible', () => {
-  assert.equal(coverageStrokeWidth(8), 4)
+  assert.equal(coverageStrokeWidth(8), 0.65)
   assert.equal(coverageStrokeWidth(9), 1.5)
   assert.ok(Math.abs(coverageStrokeWidth(12) - 1.05) < Number.EPSILON * 10)
   assert.equal(coverageStrokeWidth(15), 0.6)
@@ -64,7 +64,7 @@ test('coverage survey tracks taper at close zoom without becoming illegible', ()
   const url = new URL(coverageUrl(12, 656, 1582))
   const style = JSON.parse(url.searchParams.get('dynamicLayers')!)
   assert.ok(Math.abs(style[0].drawingInfo.renderer.symbol.width - 1.05) < Number.EPSILON * 10)
-  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 160])
+  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 180])
 })
 
 test('coverage coalesces concurrent requests and survives restart from disk', async (t) => {
