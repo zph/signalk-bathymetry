@@ -43,7 +43,8 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           (atMs) => capture.latestTideProjection(atMs),
           () => depthUnits.current()
         )
-        const csbRenderer = new NoaaCsbTileRenderer(csbStore, config.minZoom, config.maxZoom)
+        // Archive overview contours extend beyond the local soundings layer's zoom range.
+        const csbRenderer = new NoaaCsbTileRenderer(csbStore, Math.min(7, config.minZoom), config.maxZoom)
         runtime = {
           config,
           store,

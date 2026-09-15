@@ -1,13 +1,23 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { NoaaCsbStore } from '../src/noaa-csb'
 import {
   NoaaCsbViewport,
   coverageStrokeWidth,
-  coverageUrl
+  coverageUrl,
+  laneCoreWidth,
+  laneShoulderWidth,
+  nauticalLanesUrl
 } from '../src/noaa-csb-viewport'
+import {
+  encodeNauticalLaneVectors,
+  nauticalLaneDetail,
+  simplifyLine,
+  nauticalLaneVectorUrl,
+  NOAA_CSB_LANES_VECTOR_REVISION
+} from '../src/noaa-csb-lanes'
 
 test('viewport demand coalesces, retains full files across areas, and does no work at world zoom', async (t) => {
   const dir = mkdtempSync(join(process.cwd(), '.csb-viewport-'))
@@ -56,13 +66,13 @@ test('coverage export is global, translucent red, and independent of feature que
   assert.match(url.pathname, /MapServer\/export$/)
   assert.equal(url.searchParams.get('bbox')?.split(',')[0], '-180')
   const style = JSON.parse(url.searchParams.get('dynamicLayers')!)
-  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 80])
-  assert.equal(style[0].drawingInfo.renderer.symbol.width, 4)
+  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 180])
+  assert.equal(style[0].drawingInfo.renderer.symbol.width, 0.65)
   assert.equal(url.searchParams.get('transparent'), 'true')
 })
 
 test('coverage survey tracks taper at close zoom without becoming illegible', () => {
-  assert.equal(coverageStrokeWidth(8), 4)
+  assert.equal(coverageStrokeWidth(8), 0.65)
   assert.equal(coverageStrokeWidth(9), 1.5)
   assert.ok(Math.abs(coverageStrokeWidth(12) - 1.05) < Number.EPSILON * 10)
   assert.equal(coverageStrokeWidth(15), 0.6)
@@ -71,7 +81,147 @@ test('coverage survey tracks taper at close zoom without becoming illegible', ()
   const url = new URL(coverageUrl(12, 656, 1582))
   const style = JSON.parse(url.searchParams.get('dynamicLayers')!)
   assert.ok(Math.abs(style[0].drawingInfo.renderer.symbol.width - 1.05) < Number.EPSILON * 10)
-  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 160])
+  assert.deepEqual(style[0].drawingInfo.renderer.symbol.color, [220, 25, 35, 180])
+})
+
+test('nautical lanes use opaque colors and resolve finer paths at closer zooms', () => {
+  const url = new URL(nauticalLanesUrl(8, 40, 98))
+  const layers = JSON.parse(url.searchParams.get('dynamicLayers')!)
+  assert.equal(layers.length, 2)
+  assert.deepEqual(layers[0].source, { type: 'mapLayer', mapLayerId: 1 })
+  assert.deepEqual(layers[0].drawingInfo.renderer.symbol.color, [218, 105, 125, 255])
+  assert.deepEqual(layers[1].drawingInfo.renderer.symbol.color, [125, 20, 45, 255])
+  assert.ok(layers[0].drawingInfo.renderer.symbol.width > layers[1].drawingInfo.renderer.symbol.width)
+  assert.equal(laneShoulderWidth(4), 1)
+  assert.equal(laneShoulderWidth(20), 0.45)
+  assert.equal(laneCoreWidth(20), 0.2)
+
+  const closeUrl = new URL(nauticalLanesUrl(14, 655, 1583))
+  const closeLayers = JSON.parse(closeUrl.searchParams.get('dynamicLayers')!)
+  assert.notEqual(closeUrl.searchParams.get('bbox'), url.searchParams.get('bbox'))
+  assert.ok(
+    closeLayers[0].drawingInfo.renderer.symbol.width <
+      layers[0].drawingInfo.renderer.symbol.width
+  )
+})
+
+test('nautical lane vectors request a bounded longest-route sample with tile quantization', () => {
+  const url = new URL(nauticalLaneVectorUrl(11, 327, 791))
+  assert.match(url.pathname, /MapServer\/1\/query$/)
+  assert.equal(url.searchParams.get('f'), 'json')
+  assert.equal(url.searchParams.get('resultRecordCount'), '500')
+  assert.equal(url.searchParams.get('orderByFields'), 'Shape_Length DESC,OBJECTID ASC')
+  const quantization = JSON.parse(url.searchParams.get('quantizationParameters')!)
+  assert.equal(quantization.mode, 'view')
+  assert.equal(quantization.originPosition, 'upperLeft')
+  assert.ok(quantization.tolerance > 0)
+})
+
+test('quantized NOAA routes become clipped crisp MVT lines', () => {
+  const url = new URL(nauticalLaneVectorUrl(11, 327, 791))
+  const quantization = JSON.parse(url.searchParams.get('quantizationParameters')!)
+  const tile = encodeNauticalLaneVectors(
+    {
+      transform: {
+        originPosition: 'upperLeft',
+        scale: [quantization.tolerance, quantization.tolerance],
+        translate: [quantization.extent.xmin, quantization.extent.ymax]
+      },
+      features: [
+        {
+          attributes: { OBJECTID: 42 },
+          geometry: { paths: [[[20, 20], [80, 20], [80, 40]]] }
+        }
+      ]
+    },
+    11,
+    327,
+    791
+  )
+  assert.ok(tile.includes(Buffer.from('TRACKLINE')))
+  assert.ok(tile.includes(Buffer.from('CSB_GENERALIZED')))
+  assert.ok(tile.length < 1_000)
+})
+
+test('nautical lane vector tiles coalesce and persist on disk', async (t) => {
+  const dir = mkdtempSync(join(process.cwd(), '.csb-lane-vectors-'))
+  const store = new NoaaCsbStore(join(dir, 'store.sqlite'))
+  t.after(() => {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  let calls = 0
+  const query = new URL(nauticalLaneVectorUrl(11, 327, 791))
+  const quantization = JSON.parse(query.searchParams.get('quantizationParameters')!)
+  const body = {
+    transform: {
+      originPosition: 'upperLeft',
+      scale: [quantization.tolerance, quantization.tolerance],
+      translate: [quantization.extent.xmin, quantization.extent.ymax]
+    },
+    features: [
+      {
+        attributes: { OBJECTID: 42 },
+        geometry: { paths: [[[20, 20], [80, 20], [80, 40]]] }
+      }
+    ]
+  }
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return Response.json(body)
+  }
+  const service = new NoaaCsbViewport(store, dir, fetcher)
+  const tiles = await Promise.all(
+    Array.from({ length: 8 }, () => service.nauticalLaneVectors(11, 327, 791))
+  )
+  assert.equal(calls, 1)
+  assert.deepEqual(tiles[0], tiles[7])
+  assert.ok(tiles[0]!.includes(Buffer.from('TRACKLINE')))
+  assert.ok(
+    readFileSync(join(dir, `${NOAA_CSB_LANES_VECTOR_REVISION}-11-327-791.json`)).length > 20
+  )
+  const restarted = new NoaaCsbViewport(store, dir, fetcher)
+  await restarted.nauticalLaneVectors(11, 327, 791)
+  assert.equal(calls, 1)
+  // Child tiles must have independent cache entries rather than reusing a Z11 parent.
+  for (const z of [10, 12, 13]) {
+    await Promise.all(Array.from({ length: 4 }, () => service.nauticalLaneVectors(z, 327, 791)))
+  }
+  assert.equal(calls, 4)
+  for (const z of [10, 12, 13]) await restarted.nauticalLaneVectors(z, 327, 791)
+  assert.equal(calls, 4)
+  service.stop()
+  restarted.stop()
+})
+
+test('nautical lane tiles coalesce and persist independently of coverage', async (t) => {
+  const dir = mkdtempSync(join(process.cwd(), '.csb-lanes-'))
+  const store = new NoaaCsbStore(join(dir, 'store.sqlite'))
+  t.after(() => {
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  let calls = 0
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return new Response(png)
+  }
+  const service = new NoaaCsbViewport(store, dir, fetcher)
+  const images = await Promise.all(Array.from({ length: 8 }, () => service.nauticalLanes(8, 40, 98)))
+  assert.deepEqual(images[0], png)
+  assert.equal(calls, 1)
+  const cachePath = join(dir, 'nautical-lanes-v3-8-40-98.json')
+  const diskTile = readFileSync(cachePath)
+  writeFileSync(cachePath, 'corrupt after first load')
+  assert.deepEqual(await service.nauticalLanes(8, 40, 98), png)
+  assert.equal(calls, 1)
+  writeFileSync(cachePath, diskTile)
+  const restarted = new NoaaCsbViewport(store, dir, fetcher)
+  await restarted.nauticalLanes(8, 40, 98)
+  assert.equal(calls, 1)
+  service.stop()
+  restarted.stop()
 })
 
 test('coverage coalesces concurrent requests and survives restart from disk', async (t) => {
@@ -139,3 +289,99 @@ test('a pre-revision coverage tile remains an outage-only fallback', async (t) =
   assert.equal(calls, 1)
   service.stop()
 })
+
+
+test('native zooms progressively refine quantization and bound their vertex budgets', () => {
+  let priorTolerance = Infinity
+  let priorBudget = 0
+  for (let z = 10; z <= 13; z++) {
+    const url = new URL(nauticalLaneVectorUrl(z, 0, 0))
+    const quantization = JSON.parse(url.searchParams.get('quantizationParameters')!)
+    assert.ok(quantization.tolerance < priorTolerance)
+    priorTolerance = quantization.tolerance
+    const detail = nauticalLaneDetail(z)
+    assert.ok(detail.vertices > priorBudget)
+    assert.ok(detail.vertices <= 16_000)
+    priorBudget = detail.vertices
+  }
+  assert.throws(() => nauticalLaneVectorUrl(14, 0, 0))
+})
+
+test('finer geometry retains small bends, endpoints, and removes straight-line redundancy', () => {
+  const bend = [{ x: 0, y: 0 }, { x: 100, y: 12 }, { x: 200, y: 0 }]
+  assert.deepEqual(simplifyLine(bend, nauticalLaneDetail(10).tolerance), [bend[0], bend[2]])
+  assert.deepEqual(simplifyLine(bend, nauticalLaneDetail(12).tolerance), bend)
+  const smallBend = [{ x: 0, y: 0 }, { x: 100, y: 6 }, { x: 200, y: 0 }]
+  assert.equal(simplifyLine(smallBend, nauticalLaneDetail(12).tolerance).length, 2)
+  assert.deepEqual(simplifyLine(smallBend, nauticalLaneDetail(13).tolerance), smallBend)
+  assert.deepEqual(simplifyLine([{x: 0,y: 0}, {x: 100,y: 0}, {x: 200,y: 0}], 4),
+    [{x: 0,y: 0}, {x: 200,y: 0}])
+})
+
+
+test('dense native tiles remain inside their per-zoom encoded vertex limits', () => {
+  for (const z of [10, 11, 12, 13]) {
+    const quantization = JSON.parse(new URL(nauticalLaneVectorUrl(z, 327, 791))
+      .searchParams.get('quantizationParameters')!)
+    const tile = encodeNauticalLaneVectors({
+      transform: {
+        originPosition: 'upperLeft',
+        scale: [quantization.tolerance, quantization.tolerance],
+        translate: [quantization.extent.xmin, quantization.extent.ymax]
+      },
+      features: Array.from({ length: 500 }, (_, id) => ({
+        attributes: { OBJECTID: id },
+        geometry: { paths: [Array.from({ length: 80 }, (_, index) =>
+          index === 0 ? [5, 20] : [2, index % 2 ? 12 : -12])] }
+      }))
+    }, z, 327, 791)
+    const vertices = countTileVertices(tile)
+    assert.ok(vertices > 0)
+    assert.ok(vertices <= nauticalLaneDetail(z).vertices, `${z}: ${vertices} vertices`)
+  }
+})
+
+// Decode MVT geometry commands so this assertion checks the actual wire output.
+function countTileVertices(tile: Buffer): number {
+  function varint(data: Buffer, cursor: { offset: number }): number {
+    let result = 0
+    let shift = 0
+    for (;;) {
+      const byte = data[cursor.offset++]!
+      result += (byte & 127) * 2 ** shift
+      if (!(byte & 128)) return result
+      shift += 7
+    }
+  }
+  function fields(data: Buffer, wanted: number): Buffer[] {
+    const result: Buffer[] = []
+    const cursor = { offset: 0 }
+    while (cursor.offset < data.length) {
+      const tag = varint(data, cursor)
+      const wire = tag & 7
+      if (wire === 0) varint(data, cursor)
+      else if (wire === 2) {
+        const length = varint(data, cursor)
+        if (tag >> 3 === wanted) result.push(data.subarray(cursor.offset, cursor.offset + length))
+        cursor.offset += length
+      } else throw new Error(`Unexpected MVT wire type ${wire}`)
+    }
+    return result
+  }
+  let total = 0
+  for (const layer of fields(tile, 3)) {
+    for (const feature of fields(layer, 2)) {
+      for (const geometry of fields(feature, 4)) {
+        const cursor = { offset: 0 }
+        while (cursor.offset < geometry.length) {
+          const command = varint(geometry, cursor)
+          const count = command >> 3
+          if ((command & 7) === 7) continue
+          total += count
+          for (let index = 0; index < count * 2; index++) varint(geometry, cursor)
+        }
+      }
+    }
+  }
+  return total
+}

@@ -1,13 +1,16 @@
 import { lonLatToMercator, mercatorToLonLat, tileMercatorBounds } from './geo'
 import type { CsbSounding, NoaaCsbStore } from './noaa-csb'
-import { encodeSoundingPointTile } from './vector-tiles'
+import { encodeSoundingPointTile, encodeDepthContourTile, encodeTrackLineTile } from './vector-tiles'
+import { observedContours } from './noaa-csb-contours'
+import { assessCsbSoundings, type AssessedSounding } from './noaa-csb-quality'
 
 const MVT_EXTENT = 4096
 const EARTH_CIRCUMFERENCE_M = 40_075_016.686
 const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
+const MAX_TRACK_VERTICES = 6_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-mvt2'
+export const NOAA_CSB_MVT_REVISION = 'csb-quality1'
 
 export interface RenderedCsbTile {
   tile: Buffer
@@ -17,7 +20,7 @@ export interface RenderedCsbTile {
 }
 
 interface Aggregate {
-  samples: CsbSounding[]
+  samples: AssessedSounding[]
   x: number
   y: number
 }
@@ -25,14 +28,14 @@ interface Aggregate {
 export class NoaaCsbTileRenderer {
   constructor(
     private readonly store: NoaaCsbStore,
-    private readonly minZoom = 8,
+    private readonly minZoom = 7,
     private readonly maxZoom = 24
   ) {}
 
-  render(z: number, x: number, y: number): RenderedCsbTile {
+  render(z: number, x: number, y: number, archiveSoundings?: CsbSounding[]): RenderedCsbTile {
     const cellMeters = Math.max(
       MIN_DISPLAY_CELL_M,
-      (EARTH_CIRCUMFERENCE_M / 2 ** z / 256) * 2
+      (EARTH_CIRCUMFERENCE_M / 2 ** z / 256) * 16
     )
     if (z < this.minZoom || z > this.maxZoom) {
       return {
@@ -45,57 +48,57 @@ export class NoaaCsbTileRenderer {
     const bounds = tileMercatorBounds(z, x, y)
     const southwest = mercatorToLonLat(bounds.minX, bounds.minY)
     const northeast = mercatorToLonLat(bounds.maxX, bounds.maxY)
-    const soundings = this.store.listSoundings(
+    const soundings = archiveSoundings ?? this.store.listSoundings(
       [southwest.longitude, southwest.latitude, northeast.longitude, northeast.latitude],
       MAX_QUERY_SOUNDINGS
     )
-    const aggregates = aggregateSoundings(soundings, cellMeters)
+    const assessed = assessCsbSoundings(soundings)
+    const aggregates = aggregateSoundings(assessed, cellMeters)
     const span = bounds.maxX - bounds.minX
     const features = aggregates.map((aggregate) => {
       const depths = aggregate.samples.map((sample) => sample.depthM).sort((a, b) => a - b)
-      const byQuality = [...aggregate.samples].sort(
-        (a, b) => (a.metadataScore ?? 0.18) - (b.metadataScore ?? 0.18)
-      )
-      const representative = byQuality[Math.floor(byQuality.length / 2)]!
-      const depthM = median(depths)
-      const confidence = median(byQuality.map((sample) => sample.metadataScore ?? 0.18))
-      const qualification = representative.metadataQualification ?? 'raw_unknown'
-      const depthReference =
-        representative.metadataDepthReference ?? 'raw-observed-datum-unknown'
-      const reasons = [...new Set(aggregate.samples.flatMap((sample) => sample.metadataReasons ?? []))]
+      const supported = aggregate.samples.filter(s => s.contourEligible)
+      const candidates = supported.length ? supported : aggregate.samples
+      const representative = candidates.reduce((a,b) => a.depthM <= b.depthM ? a : b)
+      const depthM = representative.depthM
+      const position = lonLatToMercator(representative)
       return {
         point: {
-          x: Math.round(((aggregate.x - bounds.minX) / span) * MVT_EXTENT),
-          y: Math.round(((bounds.maxY - aggregate.y) / span) * MVT_EXTENT)
+          x: Math.round(((position.x - bounds.minX) / span) * MVT_EXTENT),
+          y: Math.round(((bounds.maxY - position.y) / span) * MVT_EXTENT)
         },
         properties: {
           DEPTH: depthM,
           VALSOU: depthM,
           BATHYMETRY_PROVIDER: 'noaa-csb',
-          BATHY_DATUM: qualification === 'datum_corrected' ? depthReference : 'UNKNOWN',
+          BATHY_DATUM: 'UNKNOWN',
           BATHY_DEPTH_M: depthM,
           BATHY_LABEL: depthM >= 10 ? Math.floor(depthM).toFixed(0) : depthM.toFixed(1),
           BATHY_LABEL_UNIT: 'm',
-          BATHY_CONFIDENCE: confidence,
-          BATHY_CONFIDENCE_REASONS: reasons.join('|'),
-          BATHY_SOUNDING_COUNT: aggregate.samples.length,
+          BATHY_CONFIDENCE: representative.reliability,
+          BATHY_CONFIDENCE_REASONS: representative.qualityReasons.join('|'),
+          CSB_QUALITY_METHOD: 'observed-consistency-v1',
+          CSB_CONTOUR_ELIGIBLE: representative.contourEligible,
+          CSB_SUSPECT_COUNT: aggregate.samples.filter(s => !s.contourEligible).length,
+          CSB_RAW_MIN_DEPTH_M: aggregate.samples.reduce((n,s) => Math.min(n,s.minDepthM ?? s.depthM),depthM),
+          CSB_RAW_MAX_DEPTH_M: aggregate.samples.reduce((n,s) => Math.max(n,s.maxDepthM ?? s.depthM),depthM),
+          ...(representative.sourceOffsetM === undefined ? {} : { CSB_ESTIMATED_OFFSET_M: representative.sourceOffsetM }),
+          BATHY_SOUNDING_COUNT: aggregate.samples.reduce((n,s) => n + (s.sampleCount ?? 1),0),
           CSB_MIN_DEPTH_M: depths[0]!,
-          CSB_MAX_DEPTH_M: depths[depths.length - 1]!,
+          CSB_MAX_DEPTH_M: aggregate.samples.reduce((n,s) => Math.max(n,s.maxDepthM ?? s.depthM),depthM),
           CSB_OBSERVED_AT_MS: representative.observedAtMs,
           CSB_PLATFORM: representative.platform,
           CSB_PROVIDER: representative.provider,
           CSB_INSTRUMENT: representative.instrument,
-          CSB_DEPTH_REFERENCE: depthReference,
-          CSB_QUALITY_CLASS: qualification,
-          CSB_METADATA_ELIGIBLE: aggregate.samples.every(
-            (sample) => sample.metadataEligibleForDirectFusion === true
-          ),
+          CSB_DEPTH_REFERENCE: 'raw-observed-datum-unknown',
           CSB_NOT_FOR_NAVIGATION: true
         }
       }
     })
     return {
-      tile: encodeSoundingPointTile(features),
+      tile: Buffer.concat([encodeSoundingPointTile(features),
+        encodeTrackLineTile(buildTrackLines(soundings, bounds, z)),
+        encodeDepthContourTile(observedContours(assessed.filter(s => s.contourEligible),z,x,y))]),
       soundingCount: soundings.length,
       pointCount: features.length,
       cellMeters
@@ -103,7 +106,106 @@ export class NoaaCsbTileRenderer {
   }
 }
 
-function aggregateSoundings(soundings: readonly CsbSounding[], cellMeters: number): Aggregate[] {
+export function buildTrackLines(
+  soundings: readonly CsbSounding[],
+  bounds: ReturnType<typeof tileMercatorBounds>,
+  zoom: number
+) {
+  const span = bounds.maxX - bounds.minX
+  const journeys = new Map<string, CsbSounding[]>()
+  for (const sounding of soundings) {
+    // An archive aggregate can represent multiple source files. Never connect those unrelated
+    // cells into an invented journey line merely because their identity was intentionally blanked.
+    if (!sounding.uniqueId || !sounding.fileUuid) continue
+    const key = `${sounding.uniqueId}\u0000${sounding.fileUuid}`
+    const journey = journeys.get(key)
+    if (journey) journey.push(sounding)
+    else journeys.set(key, [sounding])
+  }
+  const features: Array<{
+    properties: Record<string, string | number | boolean>
+    line: Array<{ x: number; y: number }>
+  }> = []
+  const baseScreenStep = zoom <= 14 ? 4 : zoom <= 16 ? 3 : 2
+  const densityScale = Math.max(1, Math.sqrt(soundings.length / MAX_TRACK_VERTICES))
+  const minimumStep = (MVT_EXTENT / 256) * baseScreenStep * densityScale
+  const flush = (line: Array<{ x: number; y: number }>) => {
+    if (line.length >= 2) features.push({ properties: { CSB_NOT_FOR_NAVIGATION: true }, line })
+  }
+  for (const journey of journeys.values()) {
+    journey.sort((left, right) => left.observedAtMs - right.observedAtMs)
+    let line: Array<{ x: number; y: number }> = []
+    let lastSeen: { x: number; y: number } | undefined
+    let previousTime: number | undefined
+    const finishLine = () => {
+      const previous = line.at(-1)
+      if (lastSeen && previous && (lastSeen.x !== previous.x || lastSeen.y !== previous.y)) {
+        line.push(lastSeen)
+      }
+      flush(line)
+      line = []
+      lastSeen = undefined
+    }
+    for (const sounding of journey) {
+      if (previousTime !== undefined && sounding.observedAtMs - previousTime > 5 * 60_000) {
+        finishLine()
+      }
+      const mercator = lonLatToMercator(sounding)
+      const point = {
+        x: Math.round(((mercator.x - bounds.minX) / span) * MVT_EXTENT),
+        y: Math.round(((bounds.maxY - mercator.y) / span) * MVT_EXTENT)
+      }
+      const previous = line.at(-1)
+      if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) >= minimumStep) {
+        line.push(point)
+      }
+      lastSeen = point
+      previousTime = sounding.observedAtMs
+    }
+    finishLine()
+  }
+  return limitTrackVertices(features)
+}
+
+function limitTrackVertices<T extends { line: Array<{ x: number; y: number }> }>(features: T[]): T[] {
+  const total = features.reduce((sum, feature) => sum + feature.line.length, 0)
+  if (total <= MAX_TRACK_VERTICES) return features
+  const stride = Math.ceil(total / MAX_TRACK_VERTICES)
+  const simplified = features.map((feature) => {
+    if (feature.line.length <= 2) return feature
+    const line = feature.line.filter((_, index) => index === 0 || index % stride === 0)
+    const last = feature.line.at(-1)!
+    if (line.at(-1) !== last) line.push(last)
+    return { ...feature, line }
+  })
+  if (simplified.reduce((sum, feature) => sum + feature.line.length, 0) <= MAX_TRACK_VERTICES) {
+    return simplified
+  }
+  // A pathological tile can contain thousands of two-point journeys that cannot be simplified.
+  // Retain the longest visible journeys first instead of sending an unbounded tile to the GPU.
+  return simplified
+    .map((feature) => ({ feature, length: lineLength(feature.line) }))
+    .sort((left, right) => right.length - left.length)
+    .reduce<{ features: T[]; vertices: number }>((result, entry) => {
+      if (result.vertices + entry.feature.line.length <= MAX_TRACK_VERTICES) {
+        result.features.push(entry.feature)
+        result.vertices += entry.feature.line.length
+      }
+      return result
+    }, { features: [], vertices: 0 }).features
+}
+
+function lineLength(line: Array<{ x: number; y: number }>): number {
+  let length = 0
+  for (let index = 1; index < line.length; index += 1) {
+    const previous = line[index - 1]!
+    const point = line[index]!
+    length += Math.hypot(point.x - previous.x, point.y - previous.y)
+  }
+  return length
+}
+
+function aggregateSoundings(soundings: readonly AssessedSounding[], cellMeters: number): Aggregate[] {
   const cells = new Map<string, Aggregate>()
   for (const sounding of soundings) {
     const point = lonLatToMercator(sounding)
@@ -116,10 +218,4 @@ function aggregateSoundings(soundings: readonly CsbSounding[], cellMeters: numbe
     } else cells.set(key, { samples: [sounding], x: point.x, y: point.y })
   }
   return [...cells.values()]
-}
-
-function median(sorted: readonly number[]): number {
-  const middle = Math.floor(sorted.length / 2)
-  if (sorted.length % 2 === 1) return sorted[middle]!
-  return (sorted[middle - 1]! + sorted[middle]!) / 2
 }

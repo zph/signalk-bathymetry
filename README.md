@@ -156,15 +156,18 @@ accepts `vessel`, `journey`, and an optional `after` cursor and returns up to
 same read access as the depth layer. The explorer reads cached data only.
 
 Enable **NOAA Crowdsourced Bathymetry** in Binnacle's chart list and expand its
-child layers. **Coverage** shows translucent red haze below zoom 9, including at
-world zoom. **Tracks** shows the finer indexed survey paths from zoom 9. Their
-rendered strokes progressively taper from 1.5 at zoom 9 to 0.6 at zoom 15 and
-closer, keeping the overlay from overpowering chart detail as you zoom in. The
-footprint is NOAA's indexed track coverage, not depth, a safety boundary, or proof
-that every record contains a valid sounding. Rendering uses NOAA's map export
-rather than a record-limited feature query. PNG tiles use the ordinary chart tile
-cache plus a one-day server disk cache, with cached fallback during upstream
-outages.
+child layers. **Tracks** generalizes NOAA journeys into a traffic-awareness
+portrayal at every zoom. Each path has an opaque light shoulder and an opaque dark
+core. The facet opacity control changes the complete rendering instead of baking
+transparency into individual tracks. Below zoom 10, raster tiles provide a distant
+regional overview. Zooms 10 through 13 request native vector tiles at each zoom,
+with progressively finer quantization and bend-preserving simplification. Their
+vertex budgets are 6,000, 8,000, 12,000, and 16,000 vertices per tile, respectively.
+At zoom 14 and closer, the facet uses detailed journey lines from locally served
+observations. These are not regulated shipping lanes or collision-avoidance
+instructions. Tile requests are coalesced and cached by zoom and coordinates,
+with a bounded 32 MB memory cache and one-day server disk cache. Geometry revisions
+invalidate old vector caches; cached tiles remain available during upstream outages.
 
 Enable the **Depths** facet to automatically download observations
 when visible tiles are requested at zoom 12 or closer. Downloads are coalesced by
@@ -173,10 +176,11 @@ are retained so panning elsewhere on the same vessel journey does not lose data.
 Older viewport-clipped cache entries are downloaded again on demand. Automatic
 imports are bounded to 50 files per area and 64 MB per file; use the manual importer
 for denser areas. `/csb/status` reports pending viewport areas and download errors.
-Zoomed-out coverage never triggers bulk depth downloads. The parent layer is disabled
-by default, with all three facets selected for when it is enabled. Each facet has
-independent visibility and opacity under the master layer. Binnacle migrates the old
-two-layer device settings to these facets, preserving hidden depths and existing opacity.
+Zoomed-out tracks never trigger bulk depth downloads. The parent layer is disabled
+by default, with both facets selected for when it is enabled. Each facet has
+independent visibility and opacity under the master layer. Binnacle preserves the
+previous Nautical lanes visibility and opacity settings under the consolidated Tracks
+name.
 Other chart clients can still consume the sounding vector tile URL directly.
 Depth dots and labels are grayscale: well-qualified metadata is nearly opaque
 black, while missing or incomplete metadata is faint but readable gray. Selecting

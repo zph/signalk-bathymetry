@@ -2,7 +2,8 @@ import type { ResourceProvider } from '@signalk/server-api'
 import type { BathymetryStore } from './store'
 import type { BathymetryConfig } from './types'
 import type { NoaaCsbStore } from './noaa-csb'
-import { NOAA_CSB_COVERAGE_STYLE_REVISION } from './noaa-csb-viewport'
+import { NOAA_CSB_LANES_STYLE_REVISION } from './noaa-csb-viewport'
+import { NOAA_CSB_LANES_VECTOR_REVISION } from './noaa-csb-lanes'
 import {
   CELL_SIZE_SCALE_DEFAULT,
   CELL_SIZE_SCALE_MAX,
@@ -18,7 +19,7 @@ export function createChartProvider(
   config: BathymetryConfig,
   csbStore?: NoaaCsbStore
 ): ResourceProvider {
-  const resources = (): Record<string, unknown> => {
+  const resources = async (): Promise<Record<string, unknown>> => {
     const result: Record<string, unknown> = {
       [DATUM_VECTOR_ID]: vectorChartResource(
         DATUM_VECTOR_ID,
@@ -30,7 +31,7 @@ export function createChartProvider(
       )
     }
     if (csbStore) {
-      result[NOAA_CSB_VECTOR_ID] = noaaCsbChartResource(config)
+      result[NOAA_CSB_VECTOR_ID] = await noaaCsbChartResource(config)
     }
     return result
   }
@@ -39,7 +40,7 @@ export function createChartProvider(
     methods: {
       listResources: async () => resources(),
       getResource: async (id, property) => {
-        const resource = resources()[id]
+        const resource = (await resources())[id]
         if (!resource || typeof resource !== 'object')
           throw new Error(`Unknown chart resource: ${id}`)
         if (!property) return resource
@@ -57,13 +58,22 @@ export function createChartProvider(
   }
 }
 
-function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown> {
-  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=cached-depths-v3'
+async function noaaCsbChartResource(config: BathymetryConfig): Promise<Record<string, unknown>> {
+  let tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=quality-v1'
+  try {
+    // The optional local bridge falls back to this provider if its cache is down.
+    require.resolve('signalk-chart-locker/dist/http/local-noaa.js')
+    const ready = await fetch('http://127.0.0.1:3000/plugins/signalk-chart-locker/local-noaa/ready', {
+      redirect: 'error', signal: AbortSignal.timeout(500)
+    })
+    if (ready.ok) tileUrl = '/plugins/signalk-chart-locker/local-noaa/{z}/{x}/{y}?display=quality-v1'
+    await ready.body?.cancel()
+  } catch { /* Stock servers continue to use the direct provider. */ }
   return {
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',
     description:
-      'Coverage haze, indexed survey tracks, and downloaded depth observations in one layer. Expand the layer to select Coverage, Tracks, and Depths. Depth darkness reflects available NOAA file metadata; missing corrections remain unknown. Not for navigation.',
+      'Zoom-adaptive crowdsourced tracks, downloaded depth observations, and approximate depth-colored contours in one layer. Expand the layer to select Tracks and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
     type: 'S-57',
     format: 'pbf',
     chartFormat: 'pbf',
@@ -72,9 +82,10 @@ function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown>
     bounds: [-180, -85.051129, 180, 85.051129],
     url: tileUrl,
     tilemapUrl: tileUrl,
-    coverageTilemapUrl: `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`,
-    layers: ['SOUNDG'],
-    chartLayers: ['SOUNDG'],
+    nauticalLanesTilemapUrl: `/plugins/signalk-bathymetry/csb/nautical-lanes/{z}/{x}/{y}.png?style=${NOAA_CSB_LANES_STYLE_REVISION}`,
+    nauticalLanesVectorTilemapUrl: `/plugins/signalk-bathymetry/csb/nautical-lanes-vector/{z}/{x}/{y}.pbf?style=${NOAA_CSB_LANES_VECTOR_REVISION}`,
+    layers: ['SOUNDG', 'DEPCNT'],
+    chartLayers: ['SOUNDG', 'DEPCNT'],
     featureInfo: 'noaa-csb-sounding',
     defaultOpacity: Math.min(config.overlayOpacity, 0.65),
     defaultVisible: false

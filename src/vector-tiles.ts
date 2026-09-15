@@ -130,16 +130,52 @@ export interface VectorPointFeature {
   point: { x: number; y: number }
 }
 
-export function encodeSoundingPointTile(features: readonly VectorPointFeature[]): Buffer {
+export interface VectorLineFeature {
+  properties: Record<string, string | number | boolean>
+  line: Array<{ x: number; y: number }>
+}
+
+export function encodeSoundingPointTile(features: readonly VectorPointFeature[], layerName = BATHYMETRY_MVT_SOUNDINGS_LAYER): Buffer {
   const tile = new ProtoWriter()
   tile.bytesField(
     3,
     encodeLayer(
-      BATHYMETRY_MVT_SOUNDINGS_LAYER,
+      layerName,
       features.map((feature) => ({ ...feature, ring: [] })),
       'point'
     )
   )
+  return tile.finish()
+}
+
+export function encodeTrackLineTile(
+  features: readonly VectorLineFeature[],
+  layerName = 'TRACKLINE'
+): Buffer {
+  const tile = new ProtoWriter()
+  tile.bytesField(
+    3,
+    encodeLayer(
+      layerName,
+      features.map((feature) => ({
+        properties: feature.properties,
+        ring: feature.line,
+        point: feature.line[0] ?? { x: 0, y: 0 }
+      })),
+      'line'
+    )
+  )
+  return tile.finish()
+}
+
+export function encodeDepthContourTile(features: Array<{ring: Array<{x:number;y:number}>; depth:number; interpolationRadiusM?:number}>): Buffer {
+  const tile = new ProtoWriter()
+  tile.bytesField(3, encodeLayer('DEPCNT', features.map(f => ({
+    ring:f.ring, point:f.ring[0]!, properties:{VALDCO:f.depth, BATHY_DATUM:'UNKNOWN',
+      CSB_DERIVED:true, CSB_CONTOUR_METHOD:'bounded-idw',
+      CSB_INTERPOLATION_RADIUS_M:f.interpolationRadiusM ?? 0,
+      CSB_NOT_FOR_NAVIGATION:true, BATHYMETRY_PROVIDER:'noaa-csb'}
+  })), 'line'))
   return tile.finish()
 }
 
@@ -252,7 +288,7 @@ function encodeVectorTile(features: readonly VectorFeature[]): Buffer {
 function encodeLayer(
   name: string,
   features: readonly VectorFeature[],
-  geometryType: 'polygon' | 'point'
+  geometryType: 'polygon' | 'point' | 'line'
 ): Buffer {
   const layer = new ProtoWriter()
   layer.uintField(15, 2)
@@ -295,11 +331,11 @@ function encodeLayer(
 function encodeFeature(
   tags: readonly number[],
   vector: VectorFeature,
-  geometryType: 'polygon' | 'point'
+  geometryType: 'polygon' | 'point' | 'line'
 ): Buffer {
   const feature = new ProtoWriter()
   feature.packedUIntField(2, tags)
-  feature.uintField(3, geometryType === 'polygon' ? 3 : 1)
+  feature.uintField(3, geometryType === 'polygon' ? 3 : geometryType === 'line' ? 2 : 1)
   const geometry: number[] = []
   if (geometryType === 'point') {
     geometry.push(command(1, 1), zigZag(vector.point.x), zigZag(vector.point.y))
@@ -307,7 +343,7 @@ function encodeFeature(
     return feature.finish()
   }
   const first = vector.ring[0]
-  if (!first || vector.ring.length < 3) return feature.finish()
+  if (!first || vector.ring.length < (geometryType === 'line' ? 2 : 3)) return feature.finish()
   geometry.push(command(1, 1), zigZag(first.x), zigZag(first.y))
   let previous = first
   geometry.push(command(2, vector.ring.length - 1))
@@ -315,7 +351,7 @@ function encodeFeature(
     geometry.push(zigZag(point.x - previous.x), zigZag(point.y - previous.y))
     previous = point
   }
-  geometry.push(command(7, 1))
+  if (geometryType === 'polygon') geometry.push(command(7, 1))
   feature.packedUIntField(4, geometry)
   return feature.finish()
 }

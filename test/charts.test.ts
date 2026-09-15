@@ -6,7 +6,8 @@ import { createChartProvider } from '../src/charts'
 import { normalizeConfig } from '../src/config'
 import { BathymetryStore } from '../src/store'
 import { NoaaCsbStore } from '../src/noaa-csb'
-import { NOAA_CSB_COVERAGE_STYLE_REVISION } from '../src/noaa-csb-viewport'
+import { NOAA_CSB_LANES_STYLE_REVISION } from '../src/noaa-csb-viewport'
+import { NOAA_CSB_LANES_VECTOR_REVISION } from '../src/noaa-csb-lanes'
 
 test('chart provider advertises one styled datum MVT chart', async (t) => {
   const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-chart-test-'))
@@ -62,7 +63,7 @@ test('chart provider advertises cached NOAA depths as a separate disabled layer'
   const resources = await provider.methods.listResources({})
   const resource = resources['signalk-bathymetry-noaa-csb-vector'] as Record<string, unknown>
   assert.ok(resource)
-  assert.deepEqual(resource.layers, ['SOUNDG'])
+  assert.deepEqual(resource.layers, ['SOUNDG', 'DEPCNT'])
   assert.equal(resource.defaultVisible, false)
   assert.equal(resource.defaultOpacity, 0.65)
   assert.match(String(resource.description), /unknown/i)
@@ -71,9 +72,14 @@ test('chart provider advertises cached NOAA depths as a separate disabled layer'
   assert.equal(resource.minzoom, 0)
   assert.equal(resource.name, 'NOAA Crowdsourced Bathymetry')
   assert.equal(resources['signalk-bathymetry-noaa-csb-coverage'], undefined)
-  assert.match(String(resource.coverageTilemapUrl), /csb\/coverage/)
+  assert.equal(resource.coverageTilemapUrl, undefined)
   assert.equal(
-    resource.coverageTilemapUrl,
-    `/plugins/signalk-bathymetry/csb/coverage/{z}/{x}/{y}.png?style=${NOAA_CSB_COVERAGE_STYLE_REVISION}`
+    resource.nauticalLanesTilemapUrl,
+    `/plugins/signalk-bathymetry/csb/nautical-lanes/{z}/{x}/{y}.png?style=${NOAA_CSB_LANES_STYLE_REVISION}`
+  )
+  assert.match(String(resource.nauticalLanesTilemapUrl), /csb\/nautical-lanes/)
+  assert.equal(
+    resource.nauticalLanesVectorTilemapUrl,
+    `/plugins/signalk-bathymetry/csb/nautical-lanes-vector/{z}/{x}/{y}.pbf?style=${NOAA_CSB_LANES_VECTOR_REVISION}`
   )
 })

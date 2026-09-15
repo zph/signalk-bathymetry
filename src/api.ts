@@ -229,6 +229,38 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
+  read.get('/csb/nautical-lanes/:z/:x/:y.png', async (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 0, 24)
+      const x = integerParam(request, 'x', 0, 2 ** z - 1)
+      const y = integerParam(request, 'y', 0, 2 ** z - 1, '.png')
+      const image = await runtime.csbViewport.nauticalLanes(z, x, y)
+      response.set('Content-Type', 'image/png')
+      response.set('Cache-Control', 'private, max-age=86400, immutable')
+      response.send(image)
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
+  read.get('/csb/nautical-lanes-vector/:z/:x/:y.pbf', async (request, response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const z = integerParam(request, 'z', 10, 13)
+      const x = integerParam(request, 'x', 0, 2 ** z - 1)
+      const y = integerParam(request, 'y', 0, 2 ** z - 1, '.pbf')
+      const tile = await runtime.csbViewport.nauticalLaneVectors(z, x, y)
+      response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+      response.set('Cache-Control', 'private, max-age=86400, immutable')
+      response.send(tile)
+    } catch (error) {
+      sendError(response, error)
+    }
+  })
+
   read.get('/csb/tiles/:z/:x/:y.pbf', async (request, response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
@@ -237,6 +269,32 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const maxCoordinate = 2 ** z - 1
       const x = integerParam(request, 'x', 0, maxCoordinate)
       const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
+      if (z >= 7) {
+        const archiveUrl = process.env.NOAA_CSB_ARCHIVE_URL || 'http://127.0.0.1:3011'
+        try {
+          const local = await fetch(`${archiveUrl.replace(/\/$/, '')}/api/soundings/${z}/${x}/${y}.json`, {
+            signal: AbortSignal.timeout(115_000)
+          })
+          if (local.status === 503 || local.status === 429) {
+            response.set('Retry-After', '2')
+            response.status(503).json({ error: 'Local sounding query busy; retry shortly' })
+            return
+          }
+          if (!local.ok) throw new Error(`Archive returned ${local.status}`)
+          const body = await local.json() as { soundings: import('./noaa-csb').CsbSounding[] }
+          if (!Array.isArray(body.soundings)) throw new Error('Invalid archive response')
+          const rendered = runtime.csbRenderer.render(z, x, y, body.soundings)
+          response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
+          response.set('Cache-Control', 'private, max-age=60')
+          response.set('X-CSB-Data-Status', 'local-archive')
+          response.set('X-CSB-Sounding-Count', String(rendered.soundingCount))
+          response.set('X-CSB-Point-Count', String(rendered.pointCount))
+          response.send(rendered.tile)
+          return
+        } catch {
+          // Retain the existing NOAA/cache path when the optional local archive is absent.
+        }
+      }
       let downloadFailed = false
       try {
         await runtime.csbViewport.ensure(z, x, y)
@@ -396,6 +454,12 @@ export function openApi(): object {
       },
       '/csb/coverage/{z}/{x}/{y}.png': {
         get: operation('NOAA global indexed track coverage, not depth')
+      },
+      '/csb/nautical-lanes/{z}/{x}/{y}.png': {
+        get: operation('Generalized NOAA journey density for traffic awareness')
+      },
+      '/csb/nautical-lanes-vector/{z}/{x}/{y}.pbf': {
+        get: operation('Render bounded, generalized NOAA journey vectors for traffic awareness')
       },
       '/csb/journeys': {
         get: operation('List vessel and source-file journey segments')
