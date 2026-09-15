@@ -253,7 +253,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const maxCoordinate = 2 ** z - 1
       const x = integerParam(request, 'x', 0, maxCoordinate)
       const y = integerParam(request, 'y', 0, maxCoordinate, '.pbf')
-      if (z >= 8) {
+      if (z >= 7) {
         const archiveUrl = process.env.NOAA_CSB_ARCHIVE_URL || 'http://127.0.0.1:3011'
         try {
           const local = await fetch(`${archiveUrl.replace(/\/$/, '')}/api/soundings/${z}/${x}/${y}.json`, {

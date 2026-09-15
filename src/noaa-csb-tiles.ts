@@ -26,7 +26,7 @@ interface Aggregate {
 export class NoaaCsbTileRenderer {
   constructor(
     private readonly store: NoaaCsbStore,
-    private readonly minZoom = 8,
+    private readonly minZoom = 7,
     private readonly maxZoom = 24
   ) {}
 

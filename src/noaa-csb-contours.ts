@@ -30,11 +30,11 @@ export function observedContours(
   x: number,
   y: number
 ): CsbContour[] {
-  if (z < 8 || soundings.length < 2) return []
+  if (z < 7 || soundings.length < 2) return []
 
   const bounds = tileMercatorBounds(z, x, y)
   const span = bounds.maxX - bounds.minX
-  const steps = z < 12 ? 64 : z >= 16 ? 32 : z >= 14 ? 24 : 16
+  const steps = z === 7 ? 128 : z < 12 ? 64 : z >= 16 ? 32 : z >= 14 ? 24 : 16
   const cellMeters = span / steps
   // At wide zoom the interpolation may bridge a modest gap in a survey line. At close zoom it
   // tightens with the map scale, and never invents a surface more than two grid cells from evidence.
