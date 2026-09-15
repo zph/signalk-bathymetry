@@ -21,7 +21,7 @@ export function createChartProvider(
   config: BathymetryConfig,
   csbStore?: NoaaCsbStore
 ): ResourceProvider {
-  const resources = (): Record<string, unknown> => {
+  const resources = async (): Promise<Record<string, unknown>> => {
     const result: Record<string, unknown> = {
       [DATUM_VECTOR_ID]: vectorChartResource(
         DATUM_VECTOR_ID,
@@ -33,7 +33,7 @@ export function createChartProvider(
       )
     }
     if (csbStore) {
-      result[NOAA_CSB_VECTOR_ID] = noaaCsbChartResource(config)
+      result[NOAA_CSB_VECTOR_ID] = await noaaCsbChartResource(config)
     }
     return result
   }
@@ -42,7 +42,7 @@ export function createChartProvider(
     methods: {
       listResources: async () => resources(),
       getResource: async (id, property) => {
-        const resource = resources()[id]
+        const resource = (await resources())[id]
         if (!resource || typeof resource !== 'object')
           throw new Error(`Unknown chart resource: ${id}`)
         if (!property) return resource
@@ -60,8 +60,17 @@ export function createChartProvider(
   }
 }
 
-function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown> {
-  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=contours-v5'
+async function noaaCsbChartResource(config: BathymetryConfig): Promise<Record<string, unknown>> {
+  let tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=contours-v5'
+  try {
+    // The optional local bridge falls back to this provider if its cache is down.
+    require.resolve('signalk-chart-locker/dist/http/local-noaa.js')
+    const ready = await fetch('http://127.0.0.1:3000/plugins/signalk-chart-locker/local-noaa/ready', {
+      redirect: 'error', signal: AbortSignal.timeout(500)
+    })
+    if (ready.ok) tileUrl = '/plugins/signalk-chart-locker/local-noaa/{z}/{x}/{y}?display=contours-v5'
+    await ready.body?.cancel()
+  } catch { /* Stock servers continue to use the direct provider. */ }
   return {
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',
