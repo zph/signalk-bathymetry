@@ -23,6 +23,16 @@ export interface CsbSounding {
   depthM: number
   sampleCount?: number
   maxDepthM?: number
+  minDepthM?: number
+  p10DepthM?: number
+  p90DepthM?: number
+  quality?: {
+    qualification?: string
+    depthReference?: string
+    erroneous?: boolean
+    soundSpeedDocumented?: boolean
+    motionOffsetsApplied?: boolean
+  }
   observedAtMs: number
   platform: string
   provider: string
