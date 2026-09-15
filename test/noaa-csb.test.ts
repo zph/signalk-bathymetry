@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import {
   csbCsvUrl,
@@ -11,6 +12,7 @@ import {
   type CsbFileMetadata
 } from '../src/noaa-csb'
 import { NoaaCsbTileRenderer } from '../src/noaa-csb-tiles'
+import { qualifyCsbMetadata } from '../src/noaa-csb-metadata'
 import { encodeSoundingPointTile } from '../src/vector-tiles'
 
 test('dense sounding tiles do not exceed the JavaScript argument stack', () => {
@@ -109,12 +111,25 @@ test('stores cached observations separately and renders sounding-only vector til
     'two,file-a,-178.91001,-23.65001,16.1,2026-05-25T07:32:46Z,Paikea,Signal K'
   ].join('\n')
   const parsed = parseCsbCsv(csv, [-179, -23.7, -178.86, -23.58], metadata)
-  assert.deepEqual(store.ingestFile(metadata, parsed.soundings, parsed.invalid), {
+  const qualityMetadata = {
+    ...metadata,
+    quality: qualifyCsbMetadata({
+      crs: { vertical: 'ChartDatum' },
+      processing: [
+        { type: 'VerticalReduction', reference: 'ChartDatum', method: 'ModelledWL' }
+      ]
+    })
+  }
+  assert.deepEqual(store.ingestFile(qualityMetadata, parsed.soundings, parsed.invalid), {
     inserted: 2,
     duplicate: 0
   })
   assert.equal(store.stats().soundings, 2)
-  assert.equal(store.listSoundings([-179, -23.7, -178.86, -23.58]).length, 2)
+  const stored = store.listSoundings([-179, -23.7, -178.86, -23.58])
+  assert.equal(stored.length, 2)
+  assert.equal(stored[0]?.metadataQualification, 'datum_corrected')
+  assert.ok((stored[0]?.metadataScore ?? 0) >= 0.95)
+  assert.equal(stored[0]?.metadataEligibleForDirectFusion, true)
   // Identity and cursor lookup preserve every original depth without cross-vessel mixing.
   assert.equal(store.journeys().length, 2)
   const first = store.journeyPoints('one', 'file-a', 0, 1)
@@ -129,6 +144,29 @@ test('stores cached observations separately and renders sounding-only vector til
   assert.equal(rendered.soundingCount, 2)
   assert.ok(rendered.pointCount > 0)
   assert.ok(rendered.tile.length > 20)
+})
+
+test('adds metadata quality columns to an existing CSB cache without discarding it', (t) => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-csb-migration-test-'))
+  const databasePath = join(directory, 'csb.sqlite')
+  const legacy = new DatabaseSync(databasePath)
+  legacy.exec(`CREATE TABLE csb_files (
+    name TEXT PRIMARY KEY, item_id TEXT NOT NULL, platform TEXT NOT NULL,
+    provider TEXT NOT NULL, instrument TEXT NOT NULL, start_at_ms INTEGER,
+    end_at_ms INTEGER, status TEXT NOT NULL CHECK(status IN ('complete','failed')),
+    imported_at_ms INTEGER, sounding_count INTEGER NOT NULL DEFAULT 0,
+    invalid_sounding_count INTEGER NOT NULL DEFAULT 0, error TEXT
+  ) STRICT`)
+  legacy.close()
+  const store = new NoaaCsbStore(databasePath)
+  t.after(() => {
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  assert.equal(store.hasFileMetadata(metadata.name), false)
+  const quality = qualifyCsbMetadata({ crs: { vertical: 'Waterline' } })
+  store.ingestFile({ ...metadata, quality }, [], 0)
+  assert.equal(store.hasFileMetadata(metadata.name), true)
 })
 
 function tileForPosition(longitude: number, latitude: number, z: number): { x: number; y: number } {

@@ -17,11 +17,16 @@ test('viewport demand coalesces, retains full files across areas, and does no wo
     rmSync(dir, { recursive: true, force: true })
   })
   let indexCalls = 0,
-    fileCalls = 0
+    fileCalls = 0,
+    metadataCalls = 0
   const fetcher: typeof fetch = async (input) => {
     if (String(input).includes('/query?')) {
       indexCalls++
       return Response.json({ features: [{ attributes: { NAME: '202609120000_test.tar.gz' } }] })
+    }
+    if (String(input).includes('/ingest-external/')) {
+      metadataCalls++
+      return Response.json({ items: [] })
     }
     fileCalls++
     return new Response(
@@ -34,11 +39,13 @@ test('viewport demand coalesces, retains full files across areas, and does no wo
   await Promise.all(Array.from({ length: 20 }, () => service.ensure(12, 12, 2324)))
   assert.equal(indexCalls, 1)
   assert.equal(fileCalls, 1)
+  assert.equal(metadataCalls, 1)
   assert.equal(store.stats().soundings, 2)
   assert.equal(store.listSoundings([-123, 37, -122, 38])[0]?.depthM, 8.7)
   await service.ensure(12, 13, 2324)
   assert.equal(indexCalls, 2)
   assert.equal(fileCalls, 1)
+  assert.equal(metadataCalls, 1)
   await service.ensure(12, 12, 2324)
   assert.equal(indexCalls, 2)
   service.stop()

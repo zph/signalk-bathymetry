@@ -135,10 +135,12 @@ POST /admin/csb/import {"bbox":[west,south,east,north],"maxFiles":2000}
 The NOAA import starts in the background. Poll `/csb/status` for discovery,
 download, invalid-row, and completion counts. Binnacle and other chart clients
 discover **NOAA Crowdsourced Bathymetry** as a chart
-resource, disabled by default. Its depths are raw observations with unknown
-vertical datum and vessel offsets. They remain visually and structurally
-separate from the plugin's tide-reduced local surface and are supplemental
-reference data only, not navigation data.
+resource, disabled by default. Each file is cross-referenced with NOAA's
+separate Crowbar metadata record. Documented datum correction, sensor draft,
+offsets, and processing determine a conservative quality score; missing
+metadata remains explicitly low confidence. The observations stay visually and
+structurally separate from the plugin's tide-reduced local surface and are
+supplemental reference data only, not navigation data.
 
 Open **Explore NOAA vessel journeys and individual depths** on the plugin home
 page, or open `journeys.html` directly. Filter by vessel, provider, instrument,
@@ -175,6 +177,9 @@ by default, with all three facets selected for when it is enabled. Each facet ha
 independent visibility and opacity under the master layer. Binnacle migrates the old
 two-layer device settings to these facets, preserving hidden depths and existing opacity.
 Other chart clients can still consume the sounding vector tile URL directly.
+Depth dots and labels are grayscale: well-qualified metadata is nearly opaque
+black, while missing or incomplete metadata is faint but readable gray. Selecting
+a depth exposes the numeric confidence and the reasons behind it.
 
 ## Storage decision
 
@@ -183,7 +188,17 @@ timestamps, coordinates, and measurements already compress repeated structure
 well at this volume, while SQLite provides transactions and point/cell queries
 without another runtime dependency.
 
-Parquet is intentionally not required. It remains a future archive/export
-option for multi-year analytics or interchange. If added, use
-`DELTA_BINARY_PACKED` for integer/time columns, dictionaries for repeated source
-and datum strings, and Zstandard page compression; keep SQLite authoritative.
+Parquet is intentionally not required by the live Signal K process; SQLite
+remains authoritative for interactive viewport queries. The offline archive and
+metadata reconciliation pipeline uses Zstandard-compressed Parquet for
+multi-year analytics and interchange.
+
+The offline [NOAA CSB metadata pipeline](tools/noaa-csb-metadata/README.md)
+downloads and resumes the complete Crowbar file-metadata catalog, inventories
+the public `csb/csv/` S3 prefix, preserves the submitted metadata verbatim,
+derives the sounding `FILE_UUID` cross-reference, and builds
+Zstandard-compressed Parquet catalogs. Its reconciliation table exposes S3
+objects without metadata and metadata without S3 objects. It can also attach a
+compact set of qualified metadata fields to an existing sounding Parquet
+dataset. Raw NOAA metadata remains separate from the operational SQLite store
+and never causes an unknown depth to be promoted automatically.

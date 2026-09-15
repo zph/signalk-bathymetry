@@ -1,0 +1,18 @@
+services:
+  noaa-csb-metadata:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command:
+      - run
+      - --root
+      - /data/mirror
+      - --output
+      - /data/parquet
+      - --workers
+      - "4"
+      - --inventory-s3
+      - --overwrite
+    volumes:
+      - ${NOAA_CSB_DATA_DIR:-./data}:/data
+    restart: "no"

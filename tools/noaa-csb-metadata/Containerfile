@@ -1,0 +1,9 @@
+FROM python:3.13-slim
+
+WORKDIR /opt/noaa-csb-metadata
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY pipeline.py ./
+
+USER 65532:65532
+ENTRYPOINT ["python", "/opt/noaa-csb-metadata/pipeline.py"]

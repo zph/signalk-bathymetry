@@ -204,8 +204,8 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       const bbox = requiredBbox(request)
       const limit = integerQuery(request, 'limit', 10_000, 1, 100_000)
       response.json({
-        datum: 'UNKNOWN',
-        warning: 'Raw observed depths; not for navigation.',
+        datum: 'MIXED',
+        warning: 'Supplemental CSB with file-level metadata quality; not for navigation.',
         soundings: runtime.csbStore.listSoundings(bbox, limit)
       })
     } catch (error) {

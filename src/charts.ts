@@ -58,12 +58,12 @@ export function createChartProvider(
 }
 
 function noaaCsbChartResource(config: BathymetryConfig): Record<string, unknown> {
-  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=cached-depths-v2'
+  const tileUrl = '/plugins/signalk-bathymetry/csb/tiles/{z}/{x}/{y}.pbf?display=cached-depths-v3'
   return {
     identifier: NOAA_CSB_VECTOR_ID,
     name: 'NOAA Crowdsourced Bathymetry',
     description:
-      'Coverage haze, indexed survey tracks, and downloaded depth observations in one layer. Expand the layer to select Coverage, Tracks, and Depths. Unknown vertical datum and vessel offsets; not for navigation.',
+      'Coverage haze, indexed survey tracks, and downloaded depth observations in one layer. Expand the layer to select Coverage, Tracks, and Depths. Depth darkness reflects available NOAA file metadata; missing corrections remain unknown. Not for navigation.',
     type: 'S-57',
     format: 'pbf',
     chartFormat: 'pbf',

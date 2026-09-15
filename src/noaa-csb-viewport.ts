@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fetchCsbCsv, discoverFiles, parseCsbCsv, type Bbox, type NoaaCsbStore } from './noaa-csb'
+import { unknownQuality, withCsbMetadata } from './noaa-csb-metadata'
 import { mercatorToLonLat, tileMercatorBounds } from './geo'
 
 const DAY = 86_400_000
@@ -89,8 +90,14 @@ export class NoaaCsbViewport {
       .then(async () => {
         this.abort.signal.throwIfAborted()
         const files = await discoverFiles(this.fetcher, bbox, MAX_FILES + 1, this.signal())
-        for (const file of files.slice(0, MAX_FILES)) {
-          if (this.store.hasFullFile(file.name)) continue
+        for (const discovered of files.slice(0, MAX_FILES)) {
+          if (this.store.hasFullFile(discovered.name) && this.store.hasFileMetadata(discovered.name))
+            continue
+          const file = await withCsbMetadata(this.fetcher, discovered, this.signal())
+          if (this.store.hasFullFile(file.name)) {
+            this.store.updateFileMetadata(file.name, file.quality ?? unknownQuality())
+            continue
+          }
           const response = await fetchCsbCsv(this.fetcher, file.name, this.signal())
           if (!response.ok) throw new Error(`NOAA archive returned HTTP ${response.status}`)
           // Keep complete files, not viewport-clipped fragments masquerading as a full cache hit.

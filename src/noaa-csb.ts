@@ -2,8 +2,35 @@ import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { unknownQuality, withCsbMetadata } from './noaa-csb-metadata'
 
 export type Bbox = [number, number, number, number]
+
+export type CsbMetadataQualification =
+  | 'datum_corrected'
+  | 'datum_correctable'
+  | 'surface_resolved'
+  | 'reference_known'
+  | 'raw_unknown'
+
+export interface CsbMetadataQuality {
+  qualification: CsbMetadataQualification
+  score: number
+  eligibleForDirectFusion: boolean
+  depthReference: string
+  reasons: string[]
+  rawMetadata: Record<string, unknown>
+  traceId?: string
+  metadataLastUpdated?: string
+  s3Uri?: string
+  sounderDraftM?: number
+  draftApplied?: boolean
+  soundSpeedDocumented?: boolean
+  positionOffsetsDocumented?: boolean
+  motionOffsetsApplied?: boolean
+  verticalReductionReference?: string
+  verticalReductionMethod?: string
+}
 
 export interface CsbFileMetadata {
   name: string
@@ -13,6 +40,7 @@ export interface CsbFileMetadata {
   instrument: string
   startAtMs?: number
   endAtMs?: number
+  quality?: CsbMetadataQuality
 }
 
 export interface CsbSounding {
@@ -25,6 +53,11 @@ export interface CsbSounding {
   platform: string
   provider: string
   instrument: string
+  metadataQualification?: CsbMetadataQualification
+  metadataScore?: number
+  metadataEligibleForDirectFusion?: boolean
+  metadataDepthReference?: string
+  metadataReasons?: string[]
 }
 
 export interface CsbStoreStats {
@@ -84,6 +117,31 @@ export class NoaaCsbStore {
     return Boolean(this.db.prepare('SELECT 1 FROM csb_full_files WHERE name=?').get(name))
   }
 
+  hasFileMetadata(name: string): boolean {
+    return Boolean(
+      this.db.prepare('SELECT 1 FROM csb_files WHERE name=? AND metadata_qualification IS NOT NULL').get(name)
+    )
+  }
+
+  updateFileMetadata(name: string, quality: CsbMetadataQuality): void {
+    this.db
+      .prepare(`UPDATE csb_files SET
+        metadata_json=?, metadata_qualification=?, metadata_score=?,
+        metadata_depth_reference=?, metadata_reasons_json=?,
+        eligible_for_direct_fusion=?, metadata_updated_at_ms=?
+        WHERE name=?`)
+      .run(
+        JSON.stringify(quality.rawMetadata),
+        quality.qualification,
+        quality.score,
+        quality.depthReference,
+        JSON.stringify(quality.reasons),
+        quality.eligibleForDirectFusion ? 1 : 0,
+        Date.now(),
+        name
+      )
+  }
+
   markFullFile(name: string): void {
     this.db.prepare('INSERT OR IGNORE INTO csb_full_files(name) VALUES (?)').run(name)
   }
@@ -96,22 +154,40 @@ export class NoaaCsbStore {
     let inserted = 0
     let duplicate = 0
     const importedAtMs = Date.now()
+    const quality = metadata.quality ?? unknownQuality()
     this.db.exec('BEGIN IMMEDIATE')
     try {
       this.db
         .prepare(`
-          INSERT INTO csb_files (name, item_id, platform, provider, instrument, status)
-          VALUES (?, ?, ?, ?, ?, 'failed')
+          INSERT INTO csb_files (
+            name, item_id, platform, provider, instrument, status,
+            metadata_json, metadata_qualification, metadata_score,
+            metadata_depth_reference, metadata_reasons_json,
+            eligible_for_direct_fusion, metadata_updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(name) DO UPDATE SET
             item_id=excluded.item_id, platform=excluded.platform, provider=excluded.provider,
-            instrument=excluded.instrument
+            instrument=excluded.instrument, metadata_json=excluded.metadata_json,
+            metadata_qualification=excluded.metadata_qualification,
+            metadata_score=excluded.metadata_score,
+            metadata_depth_reference=excluded.metadata_depth_reference,
+            metadata_reasons_json=excluded.metadata_reasons_json,
+            eligible_for_direct_fusion=excluded.eligible_for_direct_fusion,
+            metadata_updated_at_ms=excluded.metadata_updated_at_ms
         `)
         .run(
           metadata.name,
           metadata.itemId,
           metadata.platform,
           metadata.provider,
-          metadata.instrument
+          metadata.instrument,
+          JSON.stringify(quality.rawMetadata),
+          quality.qualification,
+          quality.score,
+          quality.depthReference,
+          JSON.stringify(quality.reasons),
+          quality.eligibleForDirectFusion ? 1 : 0,
+          importedAtMs
         )
       this.db.prepare('DELETE FROM csb_soundings WHERE file_name=?').run(metadata.name)
       this.db.prepare('DELETE FROM csb_full_files WHERE name=?').run(metadata.name)
@@ -147,14 +223,24 @@ export class NoaaCsbStore {
         .prepare(`
           INSERT INTO csb_files (
             name, item_id, platform, provider, instrument, start_at_ms, end_at_ms,
-            status, imported_at_ms, sounding_count, invalid_sounding_count, error
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'complete', ?, ?, ?, NULL)
+            status, imported_at_ms, sounding_count, invalid_sounding_count, error,
+            metadata_json, metadata_qualification, metadata_score,
+            metadata_depth_reference, metadata_reasons_json,
+            eligible_for_direct_fusion, metadata_updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'complete', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(name) DO UPDATE SET
             item_id=excluded.item_id, platform=excluded.platform, provider=excluded.provider,
             instrument=excluded.instrument, start_at_ms=excluded.start_at_ms,
             end_at_ms=excluded.end_at_ms, status='complete',
             imported_at_ms=excluded.imported_at_ms, sounding_count=excluded.sounding_count,
-            invalid_sounding_count=excluded.invalid_sounding_count, error=NULL
+            invalid_sounding_count=excluded.invalid_sounding_count, error=NULL,
+            metadata_json=excluded.metadata_json,
+            metadata_qualification=excluded.metadata_qualification,
+            metadata_score=excluded.metadata_score,
+            metadata_depth_reference=excluded.metadata_depth_reference,
+            metadata_reasons_json=excluded.metadata_reasons_json,
+            eligible_for_direct_fusion=excluded.eligible_for_direct_fusion,
+            metadata_updated_at_ms=excluded.metadata_updated_at_ms
         `)
         .run(
           metadata.name,
@@ -166,7 +252,14 @@ export class NoaaCsbStore {
           metadata.endAtMs ?? null,
           importedAtMs,
           inserted,
-          invalidSoundings
+          invalidSoundings,
+          JSON.stringify(quality.rawMetadata),
+          quality.qualification,
+          quality.score,
+          quality.depthReference,
+          JSON.stringify(quality.reasons),
+          quality.eligibleForDirectFusion ? 1 : 0,
+          importedAtMs
         )
       this.db.exec('COMMIT')
     } catch (error) {
@@ -196,11 +289,14 @@ export class NoaaCsbStore {
   listSoundings(bbox: Bbox, limit = 50_000): CsbSounding[] {
     const rows = this.db
       .prepare(`
-        SELECT unique_id, file_uuid, observed_at_ms, lat_e7, lon_e7, depth_mm,
-          platform, provider, instrument
-        FROM csb_soundings
-        WHERE lon_e7 BETWEEN ? AND ? AND lat_e7 BETWEEN ? AND ?
-        ORDER BY observed_at_ms DESC
+        SELECT s.unique_id, s.file_uuid, s.observed_at_ms, s.lat_e7, s.lon_e7, s.depth_mm,
+          s.platform, s.provider, s.instrument, f.metadata_qualification,
+          f.metadata_score, f.metadata_depth_reference, f.metadata_reasons_json,
+          f.eligible_for_direct_fusion
+        FROM csb_soundings s
+        JOIN csb_files f ON f.name=s.file_name
+        WHERE s.lon_e7 BETWEEN ? AND ? AND s.lat_e7 BETWEEN ? AND ?
+        ORDER BY s.observed_at_ms DESC
         LIMIT ?
       `)
       .all(
@@ -219,7 +315,14 @@ export class NoaaCsbStore {
       depthM: Number(row.depth_mm) / 1000,
       platform: String(row.platform),
       provider: String(row.provider),
-      instrument: String(row.instrument)
+      instrument: String(row.instrument),
+      metadataQualification: (row.metadata_qualification ?? 'raw_unknown') as CsbMetadataQualification,
+      metadataScore: Number(row.metadata_score ?? 0.18),
+      metadataEligibleForDirectFusion: Boolean(row.eligible_for_direct_fusion),
+      metadataDepthReference: String(
+        row.metadata_depth_reference ?? 'raw-observed-datum-unknown'
+      ),
+      metadataReasons: parseStringArray(row.metadata_reasons_json)
     }))
   }
 
@@ -258,7 +361,9 @@ export class NoaaCsbStore {
 
   revision(): number {
     const row = this.db
-      .prepare('SELECT coalesce(max(imported_at_ms),0) revision FROM csb_files')
+      .prepare(
+        'SELECT coalesce(max(max(coalesce(imported_at_ms,0),coalesce(metadata_updated_at_ms,0))),0) revision FROM csb_files'
+      )
       .get() as { revision: number }
     return row.revision
   }
@@ -304,7 +409,14 @@ export class NoaaCsbStore {
         imported_at_ms INTEGER,
         sounding_count INTEGER NOT NULL DEFAULT 0,
         invalid_sounding_count INTEGER NOT NULL DEFAULT 0,
-        error TEXT
+        error TEXT,
+        metadata_json TEXT,
+        metadata_qualification TEXT,
+        metadata_score REAL,
+        metadata_depth_reference TEXT,
+        metadata_reasons_json TEXT,
+        eligible_for_direct_fusion INTEGER,
+        metadata_updated_at_ms INTEGER
       ) STRICT;
       CREATE TABLE IF NOT EXISTS csb_soundings (
         id INTEGER PRIMARY KEY,
@@ -326,6 +438,22 @@ export class NoaaCsbStore {
       CREATE INDEX IF NOT EXISTS csb_journey_idx ON csb_soundings(unique_id, file_uuid, id);
       CREATE TABLE IF NOT EXISTS csb_full_files (name TEXT PRIMARY KEY REFERENCES csb_files(name) ON DELETE CASCADE);
     `)
+    this.ensureColumn('metadata_json', 'TEXT')
+    this.ensureColumn('metadata_qualification', 'TEXT')
+    this.ensureColumn('metadata_score', 'REAL')
+    this.ensureColumn('metadata_depth_reference', 'TEXT')
+    this.ensureColumn('metadata_reasons_json', 'TEXT')
+    this.ensureColumn('eligible_for_direct_fusion', 'INTEGER')
+    this.ensureColumn('metadata_updated_at_ms', 'INTEGER')
+  }
+
+  private ensureColumn(name: string, definition: string): void {
+    const columns = this.db.prepare("PRAGMA table_info('csb_files')").all() as Array<{
+      name: string
+    }>
+    if (!columns.some((column) => column.name === name)) {
+      this.db.exec(`ALTER TABLE csb_files ADD COLUMN ${name} ${definition}`)
+    }
   }
 }
 
@@ -373,9 +501,16 @@ export class NoaaCsbImporter {
         while (!signal.aborted) {
           const index = cursor
           cursor += 1
-          const metadata = files[index]
-          if (!metadata) return
+          const discovered = files[index]
+          if (!discovered) return
+          if (this.store.hasFile(discovered.name) && this.store.hasFileMetadata(discovered.name)) {
+            this.current.skippedFiles += 1
+            this.current.completedFiles += 1
+            continue
+          }
+          const metadata = await withCsbMetadata(this.fetcher, discovered, signal)
           if (this.store.hasFile(metadata.name)) {
+            this.store.updateFileMetadata(metadata.name, metadata.quality ?? unknownQuality())
             this.current.skippedFiles += 1
             this.current.completedFiles += 1
             continue
@@ -568,5 +703,15 @@ function emptyStatus(): CsbImportStatus {
     failedFiles: 0,
     importedSoundings: 0,
     invalidSoundings: 0
+  }
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (typeof value !== 'string') return ['metadata_not_loaded']
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return ['metadata_reasons_invalid']
   }
 }

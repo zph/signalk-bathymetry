@@ -7,7 +7,7 @@ const EARTH_CIRCUMFERENCE_M = 40_075_016.686
 const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-mvt1'
+export const NOAA_CSB_MVT_REVISION = 'csb-mvt2'
 
 export interface RenderedCsbTile {
   tile: Buffer
@@ -53,8 +53,16 @@ export class NoaaCsbTileRenderer {
     const span = bounds.maxX - bounds.minX
     const features = aggregates.map((aggregate) => {
       const depths = aggregate.samples.map((sample) => sample.depthM).sort((a, b) => a - b)
-      const representative = aggregate.samples[Math.floor(aggregate.samples.length / 2)]!
+      const byQuality = [...aggregate.samples].sort(
+        (a, b) => (a.metadataScore ?? 0.18) - (b.metadataScore ?? 0.18)
+      )
+      const representative = byQuality[Math.floor(byQuality.length / 2)]!
       const depthM = median(depths)
+      const confidence = median(byQuality.map((sample) => sample.metadataScore ?? 0.18))
+      const qualification = representative.metadataQualification ?? 'raw_unknown'
+      const depthReference =
+        representative.metadataDepthReference ?? 'raw-observed-datum-unknown'
+      const reasons = [...new Set(aggregate.samples.flatMap((sample) => sample.metadataReasons ?? []))]
       return {
         point: {
           x: Math.round(((aggregate.x - bounds.minX) / span) * MVT_EXTENT),
@@ -64,11 +72,12 @@ export class NoaaCsbTileRenderer {
           DEPTH: depthM,
           VALSOU: depthM,
           BATHYMETRY_PROVIDER: 'noaa-csb',
-          BATHY_DATUM: 'UNKNOWN',
+          BATHY_DATUM: qualification === 'datum_corrected' ? depthReference : 'UNKNOWN',
           BATHY_DEPTH_M: depthM,
           BATHY_LABEL: depthM >= 10 ? Math.floor(depthM).toFixed(0) : depthM.toFixed(1),
           BATHY_LABEL_UNIT: 'm',
-          BATHY_CONFIDENCE: 0.2,
+          BATHY_CONFIDENCE: confidence,
+          BATHY_CONFIDENCE_REASONS: reasons.join('|'),
           BATHY_SOUNDING_COUNT: aggregate.samples.length,
           CSB_MIN_DEPTH_M: depths[0]!,
           CSB_MAX_DEPTH_M: depths[depths.length - 1]!,
@@ -76,7 +85,11 @@ export class NoaaCsbTileRenderer {
           CSB_PLATFORM: representative.platform,
           CSB_PROVIDER: representative.provider,
           CSB_INSTRUMENT: representative.instrument,
-          CSB_DEPTH_REFERENCE: 'raw-observed-datum-unknown',
+          CSB_DEPTH_REFERENCE: depthReference,
+          CSB_QUALITY_CLASS: qualification,
+          CSB_METADATA_ELIGIBLE: aggregate.samples.every(
+            (sample) => sample.metadataEligibleForDirectFusion === true
+          ),
           CSB_NOT_FOR_NAVIGATION: true
         }
       }
