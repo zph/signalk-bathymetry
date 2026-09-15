@@ -80,7 +80,7 @@ python tools/noaa-csb-metadata/pipeline.py build \
 python tools/noaa-csb-metadata/pipeline.py daemon \
   --root /data/noaa-csb-archive/crowbar/mirror \
   --output /data/noaa-csb-archive/crowbar/parquet \
-  --workers 32 --interval-seconds 86400
+  --workers 16 --interval-seconds 86400
 ```
 
 The first command freezes an upper `lastUpdated` cutoff, downloads pages in
