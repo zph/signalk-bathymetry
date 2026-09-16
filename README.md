@@ -211,3 +211,81 @@ pipeline and served by the archive service. The plugin copies matched quality
 into its operational SQLite store and uses its score for rendering. Missing or
 temporarily unavailable local metadata remains explicitly low confidence and
 never triggers a live Crowbar call.
+
+### Optional NOAA crowdsourced tidal estimates
+
+In Signal K **Server → Plugin Config → Local Bathymetry**, enable
+**NOAA crowdsourced depths: estimate tidal correction to MLLW** and enter a
+seven-digit NOAA water-level station ID. This defaults **off** and is independent
+of the vessel's live-depth station/datum settings. Save/restart the plugin and
+reload the chart after changing settings. Disabling restores the original
+portrayal; neither mode changes archived source depths.
+
+Select a hydrologically representative station in the same bay/channel. The
+configurable distance limit (default 10 km, maximum 50 km) is only an additional
+guard: geographic proximity does not establish tidal equivalence across land,
+channels, or estuary reaches. No automatic nearest-station selection is made.
+Any supported US coastal NOAA station can be selected; this is not restricted
+to a particular region. MLLW here is the station's provider datum, not a
+survey-grade transfer to each observation, and no datum epoch is inferred.
+
+The plugin downloads verified, unflagged historical six-minute `water_level`
+observations in UTC station/day blocks (including the next-day boundary).
+It interpolates only across adjacent six-minute readings; no extrapolation,
+predicted-tide fallback, or preliminary observations. For eligible individual
+soundings, the estimate is:
+
+`MLLW depth estimate = original depth + unapplied sensor draft − water level`
+
+Waterline-referenced depths need no draft addition. Transducer depths require
+an explicit applied-state and, when unapplied, a known draft. Already reduced
+depths, unknown references, invalid times, distant stations, missing verified
+water levels, and combined archive cells remain unchanged. **Pre-aggregated
+archive cells still need a separate per-observation correction stage before
+aggregation; this option does not pretend to correct them.** Previously cached
+metadata must be refreshed to retain draft/applied-state fields when needed.
+
+Downloads run in the background, two at a time, without blocking tile rendering.
+A shared single-flight queue coalesces queued and active requests by provider/
+method, station, datum, product, and UTC day (the fixed method version includes
+the MLLW/verified-water-level product). Up to 256 distinct blocks are pending;
+additional blocks are deferred until requested again. The queue drains without
+another render. A 64-block in-memory LRU avoids repeated disk reads/parsing across
+tile requests; the bounded disk cache survives restarts. Cached errors are also
+shared, preventing repeated failures from hammering NOAA. Status includes active/
+queued counts, cache hits, coalesced requests, downloads, and deferred requests.
+A cold tile initially shows raw values; request/reload it again after downloads
+complete. `GET /plugins/signalk-bathymetry/status` exposes enabled/station state,
+pending downloads, and the last error. The persistent `csb-tides/` cache uses a
+size-bounded LRU (default 128 MiB, configurable 1–1024 MiB). Verified blocks refresh
+after 30 days; failures and empty blocks retry after an hour. Cached blocks work
+offline. Eviction never removes original soundings.
+
+Corrected point features carry `BATHY_DATUM=MLLW_ESTIMATE`, `CSB_TIDE_STATUS`,
+original depth, water level, applied draft, station, retrieval time, request URL,
+and method version. Uncorrected points expose their skip reason. Corrected and
+raw points are assessed/binned separately; approximate contours continue to use
+raw observations only. Tidal estimation does not grant a quality-score boost or
+make these depths suitable for primary navigation. Corrections are derived at
+render time, not exported to the permanent Parquet archive by this feature.
+
+Provider details: [NOAA CO-OPS API](https://api.tidesandcurrents.noaa.gov/api/prod/).
+
+### Contour boundaries and disputed soundings
+
+Inferred CSB contours require a `waterMask` in the local archive tile response.
+Missing, invalid, or wrong-tile masks suppress contours, not measured points.
+The version-1 contract in `src/csb-water-mask.ts` uses tile coordinates (extent
+4096), water polygon exteriors, island holes, and source/revision attribution.
+Providers must supply full-resolution shoreline geometry. The current archive
+does not yet supply this mask, so inferred contours are temporarily unavailable.
+Cells touching shoreline or containing an island are excluded conservatively.
+The unversioned optional chart-locker cache is bypassed to avoid old unclipped
+contours until its cache keys support renderer/mask revisions.
+
+Stable independent sources can dispute a shallow reading even when the reading's
+own vessel has noisy data. Two independent nearby sources must agree before a
+severe shallow disagreement is marked. Repeated disagreements can quarantine a
+continuous shallow segment of that same journey. Original depths are retained;
+suspect-only display cells show `?` rather than an ordinary depth label and cannot
+generate contours. A dispute is not proof that the real location is deep or safe.

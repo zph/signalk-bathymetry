@@ -1,5 +1,6 @@
 import { lonLatToMercator, tileMercatorBounds } from './geo'
 import type { CsbSounding } from './noaa-csb'
+import type { WaterBoundary } from './csb-water-mask'
 
 const MVT_EXTENT = 4096
 const CONTOUR_LEVELS_M = [2, 4, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200]
@@ -28,9 +29,10 @@ export function observedContours(
   soundings: readonly CsbSounding[],
   z: number,
   x: number,
-  y: number
+  y: number,
+  water?: WaterBoundary
 ): CsbContour[] {
-  if (z < 7 || soundings.length < 2) return []
+  if (!water || z < 7 || soundings.length < 2) return []
 
   const bounds = tileMercatorBounds(z, x, y)
   const span = bounds.maxX - bounds.minX
@@ -67,6 +69,8 @@ export function observedContours(
   const contours: CsbContour[] = []
   for (let gy = 0; gy < steps; gy += 1) {
     for (let gx = 0; gx < steps; gx += 1) {
+      if (!water.containsCell(gx / steps * MVT_EXTENT, gy / steps * MVT_EXTENT,
+        (gx+1) / steps * MVT_EXTENT, (gy+1) / steps * MVT_EXTENT)) continue
       const corners = [
         gridValue(values, steps, gx, gy),
         gridValue(values, steps, gx + 1, gy),

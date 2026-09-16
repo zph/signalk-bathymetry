@@ -42,7 +42,11 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   autoBackfillWhenEmpty: true,
   autoBackfillDays: 30,
   autoBackfillDelaySeconds: 15,
-  csbMetadataArchiveUrl: 'http://host.containers.internal:3011'
+  csbMetadataArchiveUrl: 'http://host.containers.internal:3011',
+  csbTidalCorrectionEnabled: false,
+  csbTideStationId: '',
+  csbTideMaxDistanceKm: 10,
+  csbTideCacheMiB: 128
 }
 
 type RawConfig = Partial<BathymetryConfig>
@@ -105,6 +109,13 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     DEFAULT_CONFIG.csbMetadataArchiveUrl
   )
   config.changeMinimumPasses = Math.max(1, Math.round(config.changeMinimumPasses))
+  config.csbTidalCorrectionEnabled = input.csbTidalCorrectionEnabled === true
+  config.csbTideStationId = typeof input.csbTideStationId === 'string' && /^\d{7}$/.test(input.csbTideStationId.trim())
+    ? input.csbTideStationId.trim() : ''
+  config.csbTideMaxDistanceKm = Number.isFinite(input.csbTideMaxDistanceKm)
+    ? clamp(input.csbTideMaxDistanceKm!, 0.1, 50) : DEFAULT_CONFIG.csbTideMaxDistanceKm
+  config.csbTideCacheMiB = Number.isFinite(input.csbTideCacheMiB)
+    ? clamp(input.csbTideCacheMiB!, 1, 1024) : DEFAULT_CONFIG.csbTideCacheMiB
   config.changeMinimumDays = Math.max(0, config.changeMinimumDays)
   if (config.instrumentMaxM <= config.instrumentMinM) {
     config.instrumentMaxM = DEFAULT_CONFIG.instrumentMaxM
@@ -249,6 +260,18 @@ export function pluginSchema(): object {
         1,
         15
       ),
+      csbTidalCorrectionEnabled: {
+        type: 'boolean', title: 'NOAA crowdsourced depths: estimate tidal correction to MLLW',
+        default: false,
+        description: 'Off preserves raw depths. Uses verified historical water levels only, for individual timestamped soundings with known depth references. Not a surveyed chart datum or navigation guarantee. Save/restart and reload the chart after changing.'
+      },
+      csbTideStationId: {
+        type: 'string', title: 'NOAA crowdsourced tide station ID', default: '',
+        pattern: '^([0-9]{7})?$',
+        description: 'Choose a hydrologically representative NOAA water-level station (same bay/channel). No automatic nearest-station guess. Blank means no corrections.'
+      },
+      csbTideMaxDistanceKm: numberField('Maximum distance from selected tide station (km)', 0.1, 50, 0.1, 10),
+      csbTideCacheMiB: numberField('Historical tide disk cache limit (MiB)', 1, 1024, 1, 128),
       csbMetadataArchiveUrl: {
         type: 'string',
         title: 'Local NOAA metadata archive URL',

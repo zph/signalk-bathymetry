@@ -87,14 +87,75 @@ export function assessCsbSoundings(input: readonly CsbSounding[]): AssessedSound
     cells.set(key, cell)
   }
   const residuals = new Map<string, number[]>()
+  // Compare stable independent sources across adjacent cells as well. A noisy
+  // vessel must not disable the reference consensus, and cell edges are not
+  // evidence boundaries. One vote per source, never per ping.
+  const stableCells = new Map<string, Array<{ id: string; depth: number; x: number; y: number }>>()
+  const disputedCeilings = new Map<AssessedSounding, number>()
+  for (const [key, cell] of cells) {
+    stableCells.set(key, [...cell].flatMap(([id, readings]) => {
+      const depths = readings.map(s => s.depthM), center = median(depths)
+      if (deviation(depths, center) > Math.max(1.5, center * .15)) return []
+      const locations = readings.map(point)
+      return [{ id, depth: center, x: median(locations.map(p => p[0])), y: median(locations.map(p => p[1])) }]
+    }))
+  }
+  for (const s of samples) {
+    if (!s.contourEligible || !source(s)) continue
+    const [x,y] = point(s), cx = Math.floor(x/50), cy = Math.floor(y/50)
+    const votes = new Map<string, number[]>()
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      for (const other of stableCells.get(`${cx+dx}:${cy+dy}`) ?? []) {
+        if (other.id === source(s) || Math.hypot(x-other.x,y-other.y) > 80) continue
+        const depths = votes.get(other.id) ?? []
+        depths.push(other.depth); votes.set(other.id, depths)
+      }
+    }
+    const depths = [...votes.values()].map(median)
+    if (depths.length < 2) continue
+    const center = median(depths)
+    if (Math.max(...depths) - Math.min(...depths) > Math.max(2, center*.2)) continue
+    if (s.depthM < center/4 && center-s.depthM > 5) {
+      s.reliability = Math.min(s.reliability, .15)
+      s.contourEligible = false
+      s.qualityReasons.push('shallow_reading_disputed_by_nearby_sources')
+      disputedCeilings.set(s, center/4)
+    }
+  }
+  // A failed sounder can produce a continuous shallow run, not just a single
+  // spike. Bridge short gaps in independent coverage only within the same
+  // timestamped journey, bracketed/supported by at least two disputed readings.
+  for (const group of passes.values()) {
+    const ceilings = group.flatMap(s => disputedCeilings.has(s) ? [disputedCeilings.get(s)!] : [])
+    if (ceilings.length < 2) continue
+    const ceiling = Math.min(...ceilings)
+    let run: AssessedSounding[] = []
+    const flush = () => {
+      if (run.filter(s => disputedCeilings.has(s)).length >= 2) {
+        for (const s of run) {
+          s.reliability = Math.min(s.reliability, .15)
+          s.contourEligible = false
+          s.qualityReasons.push('disputed_shallow_track_segment')
+        }
+      }
+      run = []
+    }
+    for (const s of group) {
+      const previous = run.at(-1)
+      if (previous && (distance(s, previous) > 80 || s.observedAtMs-previous.observedAtMs > 120_000)) flush()
+      if (s.depthM >= ceiling) { flush(); continue }
+      run.push(s)
+    }
+    flush()
+  }
   for (const cell of cells.values()) {
     const centers = new Map([...cell].map(([id, readings]) => [id, median(readings.map(s => s.depthM))]))
     // A steep local slope is not evidence of a faulty vessel. Do not compare
     // cell medians when a vessel itself observes substantial terrain variation.
-    if ([...cell].some(([id, readings]) => deviation(readings.map(s => s.depthM), centers.get(id)!) >
-      Math.max(1.5, centers.get(id)! * .15))) continue
+    const stable = new Set([...cell].filter(([id, readings]) => deviation(readings.map(s => s.depthM), centers.get(id)!) <=
+      Math.max(1.5, centers.get(id)! * .15)).map(([id]) => id))
     for (const [id, readings] of cell) {
-      const others = [...centers].filter(([other]) => other !== id).map(([, depth]) => depth)
+      const others = [...centers].filter(([other]) => other !== id && stable.has(other)).map(([, depth]) => depth)
       if (others.length < 2) continue
       const reference = median(others)
       const tolerance = Math.max(1.5, reference * .15)

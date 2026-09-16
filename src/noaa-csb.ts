@@ -6,6 +6,13 @@ import { unknownQuality, withLocalCsbMetadata } from './noaa-csb-metadata'
 
 export type Bbox = [number, number, number, number]
 
+function storedQuality(json: unknown): CsbSounding['quality'] {
+  try {
+    const value = JSON.parse(String(json))._csbQuality
+    return value && typeof value === 'object' ? value : undefined
+  } catch { return undefined }
+}
+
 export type CsbMetadataQualification =
   | 'datum_corrected'
   | 'datum_correctable'
@@ -44,6 +51,7 @@ export interface CsbFileMetadata {
 }
 
 export interface CsbSounding {
+  tidalCorrection?: import('./csb-tides').CsbTideResult
   uniqueId: string
   fileUuid: string
   longitude: number
@@ -60,6 +68,8 @@ export interface CsbSounding {
     erroneous?: boolean
     soundSpeedDocumented?: boolean
     motionOffsetsApplied?: boolean
+    draftApplied?: boolean
+    sounderDraftM?: number
   }
   observedAtMs: number
   platform: string
@@ -143,7 +153,7 @@ export class NoaaCsbStore {
         eligible_for_direct_fusion=?, metadata_updated_at_ms=?
         WHERE name=?`)
       .run(
-        JSON.stringify(quality.rawMetadata),
+        JSON.stringify({ ...quality.rawMetadata, _csbQuality: { ...quality, rawMetadata: undefined } }),
         quality.qualification,
         quality.score,
         quality.depthReference,
@@ -193,7 +203,7 @@ export class NoaaCsbStore {
           metadata.platform,
           metadata.provider,
           metadata.instrument,
-          JSON.stringify(quality.rawMetadata),
+          JSON.stringify({ ...quality.rawMetadata, _csbQuality: { ...quality, rawMetadata: undefined } }),
           quality.qualification,
           quality.score,
           quality.depthReference,
@@ -265,7 +275,7 @@ export class NoaaCsbStore {
           importedAtMs,
           inserted,
           invalidSoundings,
-          JSON.stringify(quality.rawMetadata),
+          JSON.stringify({ ...quality.rawMetadata, _csbQuality: { ...quality, rawMetadata: undefined } }),
           quality.qualification,
           quality.score,
           quality.depthReference,
@@ -304,7 +314,7 @@ export class NoaaCsbStore {
         SELECT s.unique_id, s.file_uuid, s.observed_at_ms, s.lat_e7, s.lon_e7, s.depth_mm,
           s.platform, s.provider, s.instrument, f.metadata_qualification,
           f.metadata_score, f.metadata_depth_reference, f.metadata_reasons_json,
-          f.eligible_for_direct_fusion
+          f.eligible_for_direct_fusion, f.metadata_json
         FROM csb_soundings s
         JOIN csb_files f ON f.name=s.file_name
         WHERE s.lon_e7 BETWEEN ? AND ? AND s.lat_e7 BETWEEN ? AND ?
@@ -319,6 +329,7 @@ export class NoaaCsbStore {
         limit
       ) as unknown as Array<Record<string, unknown>>
     return rows.map((row) => ({
+      quality: storedQuality(row.metadata_json) ?? {},
       uniqueId: String(row.unique_id),
       fileUuid: String(row.file_uuid),
       observedAtMs: Number(row.observed_at_ms),

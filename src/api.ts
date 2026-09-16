@@ -38,6 +38,7 @@ export interface Runtime {
   csbImporter: NoaaCsbImporter
   csbRenderer: NoaaCsbTileRenderer
   csbViewport: NoaaCsbViewport
+  csbTides?: import('./csb-tides').CsbTides
 }
 
 export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime | undefined): void {
@@ -49,6 +50,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     response.json({
       plugin: 'signalk-bathymetry',
       state: 'running',
+      csbTidalCorrection: runtime.csbTides?.status(),
       warning: 'Supplemental local estimate only; not for primary navigation.',
       config: publicConfig(runtime.config),
       capture: runtime.capture.status(),
@@ -281,11 +283,11 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
             return
           }
           if (!local.ok) throw new Error(`Archive returned ${local.status}`)
-          const body = await local.json() as { soundings: import('./noaa-csb').CsbSounding[] }
+          const body = await local.json() as { soundings: import('./noaa-csb').CsbSounding[]; waterMask?: unknown }
           if (!Array.isArray(body.soundings)) throw new Error('Invalid archive response')
-          const rendered = runtime.csbRenderer.render(z, x, y, body.soundings)
+          const rendered = runtime.csbRenderer.render(z, x, y, body.soundings, body.waterMask)
           response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
-          response.set('Cache-Control', 'private, max-age=60')
+          response.set('Cache-Control', runtime.config.csbTidalCorrectionEnabled ? 'no-store' : 'private, max-age=60')
           response.set('X-CSB-Data-Status', 'local-archive')
           response.set('X-CSB-Sounding-Count', String(rendered.soundingCount))
           response.set('X-CSB-Point-Count', String(rendered.pointCount))
@@ -303,8 +305,9 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
         // The viewport status retains the upstream error for diagnosis.
         downloadFailed = true
       }
-      const etag = `W/"${NOAA_CSB_MVT_REVISION}-${runtime.csbStore.revision()}-${z}-${x}-${y}"`
-      if (request.headers['if-none-match'] === etag) {
+      const tideKey = `${runtime.config.csbTidalCorrectionEnabled}-${runtime.config.csbTideStationId}-${runtime.config.csbTideMaxDistanceKm}`
+      const etag = `W/"${NOAA_CSB_MVT_REVISION}-${tideKey}-${runtime.csbStore.revision()}-${z}-${x}-${y}"`
+      if (!runtime.config.csbTidalCorrectionEnabled && request.headers['if-none-match'] === etag) {
         response.status(304).end()
         return
       }
@@ -314,9 +317,9 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
         return
       }
       response.set('Content-Type', 'application/vnd.mapbox-vector-tile')
-      response.set('Cache-Control', downloadFailed ? 'private, max-age=60' : 'private, max-age=86400')
+      response.set('Cache-Control', runtime.config.csbTidalCorrectionEnabled ? 'no-store' : downloadFailed ? 'private, max-age=60' : 'private, max-age=86400')
       response.set('X-CSB-Data-Status', downloadFailed ? 'cached-discovery-unavailable' : 'current')
-      response.set('ETag', etag)
+      if (!runtime.config.csbTidalCorrectionEnabled) response.set('ETag', etag)
       response.set('X-CSB-Sounding-Count', String(rendered.soundingCount))
       response.set('X-CSB-Point-Count', String(rendered.pointCount))
       response.set('X-CSB-Cell-Meters', String(rendered.cellMeters))

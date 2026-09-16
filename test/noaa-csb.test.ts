@@ -197,6 +197,13 @@ test('stores cached observations separately and renders sounding-only vector til
   })
   assert.equal(store.stats().soundings, 2)
   assert.equal(store.listSoundings([-179, -23.7, -178.86, -23.58]).length, 2)
+  store.ingestFile({ ...metadata, quality: { qualification: 'datum_correctable', score: .5,
+    eligibleForDirectFusion: false, depthReference: 'transducer', reasons: [], rawMetadata: {},
+    sounderDraftM: .65, draftApplied: false } }, parsed.soundings, parsed.invalid)
+  const quality = store.listSoundings([-179, -23.7, -178.86, -23.58])[0]?.quality
+  assert.equal(quality?.sounderDraftM, .65)
+  assert.equal(quality?.draftApplied, false)
+  assert.equal(quality?.depthReference, 'transducer')
   // Identity and cursor lookup preserve every original depth without cross-vessel mixing.
   assert.equal(store.journeys().length, 2)
   const first = store.journeyPoints('one', 'file-a', 0, 1)

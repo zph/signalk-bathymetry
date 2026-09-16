@@ -68,6 +68,10 @@ export interface BathymetryConfig {
   autoBackfillDelaySeconds: number
   /** Local NOAA archive service used for Crowbar-derived quality; never the public Crowbar API. */
   csbMetadataArchiveUrl: string
+  csbTidalCorrectionEnabled: boolean
+  csbTideStationId: string
+  csbTideMaxDistanceKm: number
+  csbTideCacheMiB: number
 }
 
 export interface SoundingInput {

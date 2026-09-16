@@ -12,6 +12,7 @@ import { VectorTileRenderer } from './vector-tiles'
 import { NoaaCsbImporter, NoaaCsbStore } from './noaa-csb'
 import { NoaaCsbTileRenderer } from './noaa-csb-tiles'
 import { NoaaCsbViewport } from './noaa-csb-viewport'
+import { CsbTides } from './csb-tides'
 
 const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
   let runtime: Runtime | undefined
@@ -44,7 +45,8 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
           () => depthUnits.current()
         )
         // Archive overview contours extend beyond the local soundings layer's zoom range.
-        const csbRenderer = new NoaaCsbTileRenderer(csbStore, Math.min(7, config.minZoom), config.maxZoom)
+        const csbTides = new CsbTides(join(dataDirectory, 'csb-tides'), config)
+        const csbRenderer = new NoaaCsbTileRenderer(csbStore, Math.min(7, config.minZoom), config.maxZoom, csbTides)
         runtime = {
           config,
           store,
@@ -61,7 +63,8 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
             fetch,
             config.csbMetadataArchiveUrl
           ),
-          csbRenderer
+          csbRenderer,
+          csbTides
         }
         app.registerResourceProvider(createChartProvider(store, config, csbStore))
         capture.start()
@@ -94,6 +97,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
 }
 
 function stopRuntime(runtime: Runtime): void {
+  runtime.csbTides?.stop()
   runtime.csbViewport.stop()
   runtime.csbImporter.stop()
   runtime.depthUnits.stop()

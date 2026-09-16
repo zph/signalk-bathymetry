@@ -1,6 +1,22 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { assessCsbSoundings } from '../src/noaa-csb-quality'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+test('Golden Gate archived tile: disputed shallow run cannot become a trusted shoal', () => {
+  // Captured from local NOAA archive tile 16/10472/25321, September 16, 2026.
+  const rows = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/golden-gate-disputed-track.json'), 'utf8')) as Array<[number,number,number,number,string,string]>
+  const points = rows.map(([longitude,latitude,depthM,observedAtMs,platform,fileUuid]) => ({
+    longitude,latitude,depthM,observedAtMs,platform,fileUuid,uniqueId:platform,provider:'',instrument:''
+  }))
+  const assessed = assessCsbSoundings(points)
+  const disputed = assessed.filter(s => s.depthM < 3)
+  assert.equal(disputed.length, 51)
+  assert.ok(disputed.every(s => !s.contourEligible))
+  assert.ok(assessed.some(s => s.depthM > 80 && s.contourEligible))
+  assert.deepEqual(assessed.map(s => s.depthM), points.map(s => s.depthM), 'never rewrite archived observations')
+})
 
 function reading(i: number, depthM: number, platform = 'one') {
   return { longitude: -122.4 + i * .00001, latitude: 37.8, depthM, platform,

@@ -2,6 +2,7 @@ import { lonLatToMercator, mercatorToLonLat, tileMercatorBounds } from './geo'
 import type { CsbSounding, NoaaCsbStore } from './noaa-csb'
 import { encodeSoundingPointTile, encodeDepthContourTile, encodeTrackLineTile } from './vector-tiles'
 import { observedContours } from './noaa-csb-contours'
+import { WaterBoundary } from './csb-water-mask'
 import { assessCsbSoundings, type AssessedSounding } from './noaa-csb-quality'
 
 const MVT_EXTENT = 4096
@@ -10,7 +11,7 @@ const MIN_DISPLAY_CELL_M = 5
 const MAX_QUERY_SOUNDINGS = 100_000
 const MAX_TRACK_VERTICES = 6_000
 
-export const NOAA_CSB_MVT_REVISION = 'csb-quality1'
+export const NOAA_CSB_MVT_REVISION = 'csb-water-quality2'
 
 export interface RenderedCsbTile {
   tile: Buffer
@@ -29,10 +30,12 @@ export class NoaaCsbTileRenderer {
   constructor(
     private readonly store: NoaaCsbStore,
     private readonly minZoom = 7,
-    private readonly maxZoom = 24
+    private readonly maxZoom = 24,
+    private readonly tides?: import('./csb-tides').CsbTides
   ) {}
 
-  render(z: number, x: number, y: number, archiveSoundings?: CsbSounding[]): RenderedCsbTile {
+  render(z: number, x: number, y: number, archiveSoundings?: CsbSounding[], waterMask?: unknown): RenderedCsbTile {
+    const water = WaterBoundary.parse(waterMask, z, x, y)
     const cellMeters = Math.max(
       MIN_DISPLAY_CELL_M,
       (EARTH_CIRCUMFERENCE_M / 2 ** z / 256) * 16
@@ -48,11 +51,14 @@ export class NoaaCsbTileRenderer {
     const bounds = tileMercatorBounds(z, x, y)
     const southwest = mercatorToLonLat(bounds.minX, bounds.minY)
     const northeast = mercatorToLonLat(bounds.maxX, bounds.maxY)
-    const soundings = archiveSoundings ?? this.store.listSoundings(
+    const rawSoundings = archiveSoundings ?? this.store.listSoundings(
       [southwest.longitude, southwest.latitude, northeast.longitude, northeast.latitude],
       MAX_QUERY_SOUNDINGS
     )
-    const assessed = assessCsbSoundings(soundings)
+    const soundings = this.tides?.apply(rawSoundings) ?? rawSoundings
+    const corrected = soundings.filter(s => s.tidalCorrection?.status === 'estimated')
+    const raw = soundings.filter(s => s.tidalCorrection?.status !== 'estimated')
+    const assessed = [...assessCsbSoundings(raw), ...assessCsbSoundings(corrected)]
     const aggregates = aggregateSoundings(assessed, cellMeters)
     const span = bounds.maxX - bounds.minX
     const features = aggregates.map((aggregate) => {
@@ -71,17 +77,27 @@ export class NoaaCsbTileRenderer {
           DEPTH: depthM,
           VALSOU: depthM,
           BATHYMETRY_PROVIDER: 'noaa-csb',
-          BATHY_DATUM: 'UNKNOWN',
+          BATHY_DATUM: representative.tidalCorrection?.status === 'estimated' ? 'MLLW_ESTIMATE' : 'UNKNOWN',
+          CSB_TIDE_STATUS: representative.tidalCorrection?.status ?? 'off',
+          ...(representative.tidalCorrection?.status === 'estimated' ? {
+            CSB_ORIGINAL_DEPTH_M: representative.tidalCorrection.originalDepthM,
+            CSB_TIDE_WATER_LEVEL_M: representative.tidalCorrection.waterLevelM!,
+            CSB_SENSOR_OFFSET_M: representative.tidalCorrection.sensorOffsetM!,
+            CSB_TIDE_STATION: representative.tidalCorrection.stationId!,
+            CSB_TIDE_SOURCE: representative.tidalCorrection.sourceUrl!,
+            CSB_TIDE_FETCHED_AT_MS: representative.tidalCorrection.fetchedAtMs!,
+            CSB_TIDE_METHOD: representative.tidalCorrection.method!
+          } : {}),
           BATHY_DEPTH_M: depthM,
-          BATHY_LABEL: depthM >= 10 ? Math.floor(depthM).toFixed(0) : depthM.toFixed(1),
+          BATHY_LABEL: representative.contourEligible ? (depthM >= 10 ? Math.floor(depthM).toFixed(0) : depthM.toFixed(1)) : '?',
           BATHY_LABEL_UNIT: 'm',
           BATHY_CONFIDENCE: representative.reliability,
           BATHY_CONFIDENCE_REASONS: representative.qualityReasons.join('|'),
           CSB_QUALITY_METHOD: 'observed-consistency-v1',
           CSB_CONTOUR_ELIGIBLE: representative.contourEligible,
           CSB_SUSPECT_COUNT: aggregate.samples.filter(s => !s.contourEligible).length,
-          CSB_RAW_MIN_DEPTH_M: aggregate.samples.reduce((n,s) => Math.min(n,s.minDepthM ?? s.depthM),depthM),
-          CSB_RAW_MAX_DEPTH_M: aggregate.samples.reduce((n,s) => Math.max(n,s.maxDepthM ?? s.depthM),depthM),
+          CSB_RAW_MIN_DEPTH_M: aggregate.samples.reduce((n,s) => Math.min(n, s.tidalCorrection?.originalDepthM ?? s.minDepthM ?? s.depthM), Infinity),
+          CSB_RAW_MAX_DEPTH_M: aggregate.samples.reduce((n,s) => Math.max(n, s.tidalCorrection?.originalDepthM ?? s.maxDepthM ?? s.depthM), -Infinity),
           ...(representative.sourceOffsetM === undefined ? {} : { CSB_ESTIMATED_OFFSET_M: representative.sourceOffsetM }),
           BATHY_SOUNDING_COUNT: aggregate.samples.reduce((n,s) => n + (s.sampleCount ?? 1),0),
           CSB_MIN_DEPTH_M: depths[0]!,
@@ -90,7 +106,7 @@ export class NoaaCsbTileRenderer {
           CSB_PLATFORM: representative.platform,
           CSB_PROVIDER: representative.provider,
           CSB_INSTRUMENT: representative.instrument,
-          CSB_DEPTH_REFERENCE: 'raw-observed-datum-unknown',
+          CSB_DEPTH_REFERENCE: representative.tidalCorrection?.status === 'estimated' ? 'estimated-MLLW-station-transfer' : 'raw-observed-datum-unknown',
           CSB_NOT_FOR_NAVIGATION: true
         }
       }
@@ -98,7 +114,9 @@ export class NoaaCsbTileRenderer {
     return {
       tile: Buffer.concat([encodeSoundingPointTile(features),
         encodeTrackLineTile(buildTrackLines(soundings, bounds, z)),
-        encodeDepthContourTile(observedContours(assessed.filter(s => s.contourEligible),z,x,y))]),
+        // Do not mix datums in interpolation. Corrected observations remain labeled points;
+        // an estimated contour could conceal adjacent unsupported raw measurements.
+        encodeDepthContourTile(observedContours(assessed.filter(s => s.contourEligible && s.tidalCorrection?.status !== 'estimated'),z,x,y,water))]),
       soundingCount: soundings.length,
       pointCount: features.length,
       cellMeters
@@ -209,7 +227,7 @@ function aggregateSoundings(soundings: readonly AssessedSounding[], cellMeters: 
   const cells = new Map<string, Aggregate>()
   for (const sounding of soundings) {
     const point = lonLatToMercator(sounding)
-    const key = `${Math.floor(point.x / cellMeters)}:${Math.floor(point.y / cellMeters)}`
+    const key = `${sounding.tidalCorrection?.status === 'estimated' ? 'MLLW' : 'raw'}:${Math.floor(point.x / cellMeters)}:${Math.floor(point.y / cellMeters)}`
     const aggregate = cells.get(key)
     if (aggregate) {
       aggregate.samples.push(sounding)

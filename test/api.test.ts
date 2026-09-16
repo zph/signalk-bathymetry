@@ -12,6 +12,7 @@ type Handler = (request: Request, response: Response) => unknown
 test('cached NOAA depths remain available during discovery outages', async () => {
   for (const count of [0, 12]) {
     const runtime = {
+      config: normalizeConfig({}),
       csbViewport: { ensure: async () => { throw new Error('NOAA unavailable') } },
       csbStore: { revision: () => 1 },
       csbRenderer: { render: () => ({ tile: EMPTY_BATHYMETRY_MVT, soundingCount: count, pointCount: count, cellMeters: 5 }) }
@@ -45,6 +46,20 @@ test('native NOAA vector zooms are served independently and reject out-of-range 
     }
   }
   assert.deepEqual(calls, [10, 11, 12, 13])
+})
+
+test('tidal tiles bypass conditional caching while background water levels change', async () => {
+  const runtime = {
+    config: normalizeConfig({ csbTidalCorrectionEnabled: true, csbTideStationId: '9414290' }),
+    csbViewport: { ensure: async () => {} },
+    csbStore: { revision: () => 1 },
+    csbRenderer: { render: () => ({ tile: EMPTY_BATHYMETRY_MVT, soundingCount: 1, pointCount: 1, cellMeters: 5 }) }
+  } as unknown as Runtime
+  const result = fakeResponse()
+  await tileHandler(runtime, '/csb/tiles/:z/:x/:y.pbf')(fakeRequest({}, { z: '6', x: '0', y: '0' }), result.response)
+  assert.equal(result.status(), 200)
+  assert.equal(result.headers.get('Cache-Control'), 'no-store')
+  assert.equal(result.headers.has('ETag'), false)
 })
 
 function tileHandler(runtime: Runtime, route = '/tiles/:z/:x/:y.pbf'): Handler {
