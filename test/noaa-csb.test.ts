@@ -31,6 +31,15 @@ test('labels select shallowest neighbors and reveal more observations as zoom in
   assert.equal(low.soundingCount,points.length)
 })
 
+test('suspect-only cells retain raw depth but never emit an ordinary S-57 depth label', () => {
+  const renderer = new NoaaCsbTileRenderer({} as NoaaCsbStore)
+  const tile = renderer.render(14,8192,8191,[{uniqueId:'bad',fileUuid:'f',longitude:.001,latitude:.001,
+    depthM:.6,observedAtMs:1,platform:'bad',provider:'',instrument:'',quality:{erroneous:true}}]).tile
+  assert.ok(tile.includes(Buffer.from('BATHY_DEPTH_M')))
+  assert.ok(!tile.includes(Buffer.from('VALSOU')))
+  assert.ok(tile.includes(Buffer.from('source_flagged_erroneous')))
+})
+
 test('detailed tiles include screen-simplified journey lines', () => {
   const points = Array.from({ length: 5000 }, (_, index) => ({
     uniqueId: 'vessel',

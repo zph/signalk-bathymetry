@@ -74,8 +74,9 @@ export class NoaaCsbTileRenderer {
           y: Math.round(((bounds.maxY - position.y) / span) * MVT_EXTENT)
         },
         properties: {
-          DEPTH: depthM,
-          VALSOU: depthM,
+          // S-57 clients label DEPTH/VALSOU directly, ignoring BATHY_LABEL.
+          // Keep disputed values inspectable without emitting a normal sounding label.
+          ...(representative.contourEligible ? { DEPTH: depthM, VALSOU: depthM } : {}),
           BATHYMETRY_PROVIDER: 'noaa-csb',
           BATHY_DATUM: representative.tidalCorrection?.status === 'estimated' ? 'MLLW_ESTIMATE' : 'UNKNOWN',
           CSB_TIDE_STATUS: representative.tidalCorrection?.status ?? 'off',
