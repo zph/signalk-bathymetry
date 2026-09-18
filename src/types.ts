@@ -142,6 +142,7 @@ export interface SurfaceCell {
 
 export interface StoreStats {
   soundings: number
+  supersededSoundings?: number
   sourceSamples: number
   rejectedStationarySamples: number
   accepted: number

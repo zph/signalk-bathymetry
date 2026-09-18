@@ -236,3 +236,40 @@ test('migration retains legacy evidence and rebuilds horizontal confidence on re
   assert.equal(store.listSoundings({ limit: 1 })[0]!.horizontalSigmaM, config.positionSigmaM)
   assert.equal(store.lookupCell(input.latitude, input.longitude, config.targetDatum)!.horizontalSigmaM, config.positionSigmaM)
 })
+
+test('historical replacement is atomic and idempotent, preserves audit evidence, and removes the old cell', t => {
+  const { store, config } = withStore(t)
+  const original = sounding(config, { positionMethod: 'legacy_unaligned' })
+  store.ingest([original])
+  const id = Number(store.listSoundings({ limit: 1 })[0]!.id)
+  const corrected = sounding(config, { observedAtMs: original.observedAtMs, longitude: original.longitude + 0.01,
+    origin: 'history', positionMethod: 'history_geometry_v1', datumDepthM: 4,
+    geometry: { replacesSoundingId: id, reconstruction: 'history-geometry-v1' } })
+  assert.equal(store.replaceFromHistory([{ originalId: id, sounding: corrected }]), 1)
+  assert.equal(store.replaceFromHistory([{ originalId: id, sounding: corrected }]), 0)
+  assert.equal(store.stats().soundings, 1)
+  assert.equal(store.stats().supersededSoundings, 1)
+  assert.equal(store.lookupCell(original.latitude, original.longitude, config.targetDatum), undefined)
+  assert.equal(store.lookupCell(corrected.latitude, corrected.longitude, config.targetDatum)!.robustDepthM, 4)
+  assert.equal(store.rebuildTargets(0, Date.now()).length, 0)
+  store.reprocessAll()
+  assert.equal(store.listSoundings({ limit: 10 }).length, 1)
+  assert.equal(store.stats().accepted, 1)
+  assert.equal(store.stats().supersededSoundings, 1)
+})
+
+test('invalid replacement rolls back the entire batch and retains originals', t => {
+  const { store, config } = withStore(t)
+  const original = sounding(config, { positionMethod: 'legacy_unaligned' })
+  store.ingest([original, { ...original, observedAtMs: original.observedAtMs + 1000 }])
+  const originals = store.listSoundings({ limit: 10 })
+  const replacements = originals.map(row => ({ originalId: Number(row.id), sounding: sounding(config, {
+    observedAtMs: Date.parse(String(row.observedAt)), positionMethod: 'history_geometry_v1',
+    geometry: { replacesSoundingId: Number(row.id) }
+  }) }))
+  replacements[1]!.sounding.tideDatum = 'wrong'
+  assert.throws(() => store.replaceFromHistory(replacements), /preserve its datum/)
+  assert.equal(store.stats().soundings, 2)
+  assert.equal(store.stats().supersededSoundings, 0)
+  assert.equal(store.rebuildTargets(0, Date.now()).length, 2)
+})

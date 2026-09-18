@@ -64,6 +64,7 @@ export function normalizeConfig(raw: object): BathymetryConfig {
     'attitudeMaxAgeSeconds', 'attitudeSigmaDegrees', 'beamWidthDegrees', 'maxLiveTimeSkewSeconds'] as const) {
     config[key] = positive(config[key], DEFAULT_CONFIG[key])
   }
+  config.historyResolutionSeconds = Math.max(1, Math.min(60, Math.round(positive(config.historyResolutionSeconds, 1))))
   config.beamWidthDegrees = Math.min(90, config.beamWidthDegrees)
   config.attitudeCorrection = input.attitudeCorrection === true
   config.targetDatum = nonEmpty(config.targetDatum, DEFAULT_CONFIG.targetDatum).toUpperCase()

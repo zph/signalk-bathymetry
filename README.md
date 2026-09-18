@@ -137,6 +137,7 @@ Administrator-only operations:
 
 ```text
 POST /admin/backfill  {"from":"...","to":"..."}  # maximum 31 days/request
+POST /admin/rebuild-history {}  # reconstruct existing soundings; poll /status
 POST /admin/reprocess
 POST /admin/csb/import {"bbox":[west,south,east,north],"maxFiles":2000}
 ```

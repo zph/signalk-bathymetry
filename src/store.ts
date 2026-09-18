@@ -66,6 +66,23 @@ interface DepthCluster {
   oldestAtMs: number
 }
 
+export interface RebuildTarget {
+  id: number
+  observedAtMs: number
+  windowStartMs: number
+  windowEndMs: number
+  sampleCount: number
+  rawDepthM: number
+  offsetM: number
+  tideDatum: string
+  tideStationId: string
+  tideStationName: string
+  depthReference: string
+  passId: string
+  trackId: string
+  aggregationKind: string
+}
+
 export class BathymetryStore {
   private readonly db: DatabaseSync
   private readonly insertRaw: StatementSync
@@ -109,7 +126,7 @@ export class BathymetryStore {
     this.selectRawCell = this.db.prepare(`
       SELECT id, pass_id, depth_source, datum_depth_mm, vertical_sigma_mm, horizontal_sigma_mm, observed_at_ms,
         aggregation_kind, sample_count, rejected_sample_count
-      FROM raw_soundings
+      FROM active_soundings
       WHERE cell_x=? AND cell_y=? AND tide_datum=?
       ORDER BY observed_at_ms, id
     `)
@@ -144,8 +161,8 @@ export class BathymetryStore {
     const modelCoverage = this.db
       .prepare(`
         SELECT
-          (SELECT count(*) FROM raw_soundings) AS raw_count,
-          (SELECT count(*) FROM qc_classifications WHERE model_version=?) AS classified_count
+          (SELECT count(*) FROM active_soundings) AS raw_count,
+          (SELECT count(*) FROM qc_classifications q JOIN active_soundings r ON r.id=q.sounding_id WHERE model_version=?) AS classified_count
       `)
       .get(MODEL_VERSION) as Record<string, unknown>
     if (Number(modelCoverage.classified_count) < Number(modelCoverage.raw_count)) {
@@ -190,9 +207,72 @@ export class BathymetryStore {
     return { inserted, duplicate }
   }
 
+  /** Only uncorrected mapped evidence is eligible. New live geometry is left alone. */
+  rebuildTargets(fromMs: number, toMs: number): RebuildTarget[] {
+    const rows = this.db.prepare(`SELECT * FROM active_soundings
+      WHERE observed_at_ms>=? AND observed_at_ms<?
+      AND position_method IN ('legacy_unaligned', 'history_unaligned', 'unknown')
+      ORDER BY observed_at_ms, id`).all(fromMs, toMs) as Record<string, unknown>[]
+    return rows.map(row => ({ id: Number(row.id), observedAtMs: Number(row.observed_at_ms),
+      windowStartMs: Number(row.window_start_ms), windowEndMs: Number(row.window_end_ms),
+      sampleCount: Number(row.sample_count), rawDepthM: Number(row.depth_raw_mm) / 1000,
+      offsetM: row.surface_to_transducer_mm === null ? Number.NaN : Number(row.surface_to_transducer_mm) / 1000, tideDatum: String(row.tide_datum),
+      tideStationId: String(row.tide_station_id), tideStationName: String(row.tide_station_name),
+      depthReference: String(row.depth_reference), passId: String(row.pass_id), trackId: String(row.track_id),
+      aggregationKind: String(row.aggregation_kind) }))
+  }
+
+  hasSoundingsInRange(fromMs: number, toMs: number): boolean {
+    return !!this.db.prepare('SELECT id FROM active_soundings WHERE observed_at_ms>=? AND observed_at_ms<? LIMIT 1').get(fromMs, toMs)
+  }
+
+  rebuildRange(): { fromMs: number; toMs: number } | undefined {
+    const row = this.db.prepare(`SELECT min(observed_at_ms) first, max(observed_at_ms) last
+      FROM active_soundings WHERE position_method IN ('legacy_unaligned', 'history_unaligned', 'unknown')`).get()!
+    return row.first === null ? undefined : { fromMs: Number(row.first), toMs: Number(row.last) + 1 }
+  }
+
+  /** Atomic per batch; originals remain auditable, but no longer contribute to cells. */
+  replaceFromHistory(replacements: readonly { originalId: number; sounding: SoundingInput }[]): number {
+    let replaced = 0
+    const affected = new Map<string, { x: number; y: number; datum: string }>()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const { originalId, sounding } of replacements) {
+        const original = this.db.prepare(`SELECT * FROM active_soundings WHERE id=?
+          AND position_method IN ('legacy_unaligned', 'history_unaligned', 'unknown')`).get(originalId)
+        if (!original) continue // retry or a concurrent replay already committed it
+        if (sounding.geometry?.replacesSoundingId !== originalId || sounding.positionMethod !== 'history_geometry_v1' ||
+          sounding.tideDatum !== original.tide_datum || sounding.observedAtMs !== Number(original.observed_at_ms)) {
+          throw new Error('Historical replacement must identify the original observation and preserve its datum/time')
+        }
+        const cell = cellForPosition(sounding, this.config.baseCellMeters)
+        const result = this.insertRaw.run(...this.rawParameters(sounding, cell.x, cell.y))
+        if (!result.changes) throw new Error('Historical replacement fingerprint collision')
+        this.db.prepare('INSERT INTO sounding_replacements VALUES (?, ?, ?, ?)')
+          .run(originalId, result.lastInsertRowid, Date.now(), 'history-geometry-v1')
+        for (const item of [cell, { x: Number(original.cell_x), y: Number(original.cell_y) }]) {
+          affected.set(`${item.x}:${item.y}:${sounding.tideDatum}`, { ...item, datum: sounding.tideDatum })
+        }
+        replaced += 1
+      }
+      // Rebuild without treating a processing correction as a new seabed change.
+      for (const cell of affected.values()) {
+        this.db.prepare('DELETE FROM surface_cells WHERE cell_x=? AND cell_y=? AND datum=? AND model_version=?')
+          .run(cell.x, cell.y, cell.datum, MODEL_VERSION)
+        this.rebuildCell(cell.x, cell.y, cell.datum)
+      }
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+    return replaced
+  }
+
   reprocessAll(): number {
     const rows = this.db
-      .prepare('SELECT DISTINCT cell_x, cell_y, tide_datum FROM raw_soundings')
+      .prepare('SELECT DISTINCT cell_x, cell_y, tide_datum FROM active_soundings')
       .all() as unknown as Array<{ cell_x: number; cell_y: number; tide_datum: string }>
     this.db.exec('BEGIN IMMEDIATE')
     try {
@@ -300,7 +380,7 @@ export class BathymetryStore {
           r.aggregation_kind, r.sample_count, r.rejected_sample_count,
           r.window_start_ms, r.window_end_ms,
           q.qc_state, q.reasons_json
-        FROM raw_soundings r
+        FROM active_soundings r
         JOIN qc_classifications q ON q.sounding_id=r.id
         WHERE ${conditions.join(' AND ')}
         ORDER BY r.observed_at_ms DESC
@@ -355,20 +435,22 @@ export class BathymetryStore {
     const counts = this.db
       .prepare(`
         SELECT
-          (SELECT count(*) FROM raw_soundings) AS soundings,
-          (SELECT count(*) FROM qc_classifications WHERE model_version=? AND qc_state='accepted') AS accepted,
-          (SELECT count(*) FROM qc_classifications WHERE model_version=? AND qc_state='quarantined') AS quarantined,
+          (SELECT count(*) FROM active_soundings) AS soundings,
+          (SELECT count(*) FROM sounding_replacements) AS superseded,
+          (SELECT count(*) FROM qc_classifications q JOIN active_soundings r ON r.id=q.sounding_id WHERE model_version=? AND qc_state='accepted') AS accepted,
+          (SELECT count(*) FROM qc_classifications q JOIN active_soundings r ON r.id=q.sounding_id WHERE model_version=? AND qc_state='quarantined') AS quarantined,
           (SELECT count(*) FROM surface_cells WHERE model_version=?) AS cells,
-          (SELECT coalesce(sum(sample_count),0) FROM raw_soundings) AS source_samples,
-          (SELECT coalesce(sum(rejected_sample_count),0) FROM raw_soundings) AS rejected_stationary_samples,
-          (SELECT max(observed_at_ms) FROM raw_soundings) AS latest
+          (SELECT coalesce(sum(sample_count),0) FROM active_soundings) AS source_samples,
+          (SELECT coalesce(sum(rejected_sample_count),0) FROM active_soundings) AS rejected_stationary_samples,
+          (SELECT max(observed_at_ms) FROM active_soundings) AS latest
       `)
       .get(MODEL_VERSION, MODEL_VERSION, MODEL_VERSION) as Record<string, unknown>
     const boundsRow = this.db
-      .prepare('SELECT min(lon_e7) min_lon, min(lat_e7) min_lat, max(lon_e7) max_lon, max(lat_e7) max_lat FROM raw_soundings')
+      .prepare('SELECT min(lon_e7) min_lon, min(lat_e7) min_lat, max(lon_e7) max_lon, max(lat_e7) max_lat FROM active_soundings')
       .get() as Record<string, unknown>
     const stats: StoreStats = {
       soundings: Number(counts.soundings),
+      supersededSoundings: Number(counts.superseded),
       sourceSamples: Number(counts.source_samples),
       rejectedStationarySamples: Number(counts.rejected_stationary_samples),
       accepted: Number(counts.accepted),
@@ -501,6 +583,16 @@ export class BathymetryStore {
         value TEXT NOT NULL
       ) STRICT;
     `)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sounding_replacements (
+        original_id INTEGER PRIMARY KEY REFERENCES raw_soundings(id),
+        replacement_id INTEGER NOT NULL UNIQUE REFERENCES raw_soundings(id),
+        replaced_at_ms INTEGER NOT NULL,
+        method TEXT NOT NULL
+      ) STRICT;
+      CREATE VIEW IF NOT EXISTS active_soundings AS
+        SELECT * FROM raw_soundings WHERE id NOT IN (SELECT original_id FROM sounding_replacements);
+    `)
     this.ensureColumn('raw_soundings', 'horizontal_sigma_mm', 'INTEGER')
     this.ensureColumn('raw_soundings', 'position_method', "TEXT NOT NULL DEFAULT 'legacy_unaligned'")
     this.ensureColumn('raw_soundings', 'geometry_json', "TEXT NOT NULL DEFAULT '{}'")
@@ -516,7 +608,7 @@ export class BathymetryStore {
       UPDATE raw_soundings SET window_end_ms=observed_at_ms WHERE window_end_ms=0;
     `)
     this.migrateGridIfNeeded()
-    this.db.exec('PRAGMA user_version=4;')
+    this.db.exec('PRAGMA user_version=5;')
   }
 
   private migrateGridIfNeeded(): void {
@@ -573,7 +665,8 @@ export class BathymetryStore {
           Math.round(s.latitude * 1e7),
           Math.round(s.longitude * 1e7),
           s.depthSource,
-          Math.round(s.rawDepthM * 1000)
+          Math.round(s.rawDepthM * 1000),
+          ...(s.geometry?.replacesSoundingId ? ['history-geometry-v1', s.geometry.replacesSoundingId] : [])
         ].join('|')
       )
       .digest('hex')
@@ -621,7 +714,11 @@ export class BathymetryStore {
 
   private rebuildCell(cellX: number, cellY: number, datum: string): void {
     const rows = this.selectRawCell.all(cellX, cellY, datum) as unknown as RawCellRow[]
-    if (rows.length === 0) return
+    if (rows.length === 0) {
+      this.db.prepare('DELETE FROM surface_cells WHERE cell_x=? AND cell_y=? AND datum=? AND model_version=?')
+        .run(cellX, cellY, datum, MODEL_VERSION)
+      return
+    }
     const existing = this.selectExistingCell.get(
       cellX,
       cellY,

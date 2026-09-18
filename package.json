@@ -1,6 +1,6 @@
 {
   "name": "signalk-bathymetry",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Source-aware local bathymetry and interactive vector cells for Signal K chartplotters",
   "license": "MIT",
   "main": "dist/index.js",

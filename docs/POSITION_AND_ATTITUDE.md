@@ -94,5 +94,44 @@ attitude-adjusted immersion when available, and contemporaneous tide. Stationary
 aggregation preserves geometry uncertainty rather than averaging it away.
 The raw journal's correction-on-read is still offset/tide only, not an attitude
 reprocessing engine. Old mapped soundings are not retrospectively attitude-corrected.
-History backfill is explicitly unavailable while attitude correction is enabled,
-because the current History import lacks synchronized attitude/heading metadata.
+Historical geometry can now be reconstructed from separately queried history
+paths, subject to the coverage and timing checks described below.
+
+## Reconstructing existing soundings from history
+
+`POST /admin/rebuild-history` with `{}` starts a background reconstruction over
+all remaining uncorrected mapped records. Optional ISO `from` and `to` fields
+bound the selection (inclusive start, exclusive end). It requires administrator
+access, enabled raw-beam correction, and one-second history resolution.
+`GET /status` exposes `history.rebuild` progress, counts, and any failure.
+
+The worker queries GPS, raw range, roll, pitch, true heading, speed, course and
+tide separately in bounded six-hour chunks with three queries in flight. It asks
+for **first** values and refuses a provider that substitutes averages. History
+bucket times still differ from instrument observation times: the reconstruction
+retains the GNSS floor, adds speed times bucket/alignment interval to horizontal
+uncertainty and a declared 0.15 m/s temporal allowance to vertical uncertainty.
+This allowance is an estimate, not a measured seafloor slope. True heading is
+never linearly averaged through its 0/360-degree discontinuity.
+
+A stationary replacement needs at least the configured minimum samples and 80%
+of the original accepted sample count (capped by the available one-second
+buckets), coverage near both window ends, and no gap longer than five seconds.
+Original records without adequate coverage, correct reference/datum/station,
+or a known vertical offset remain active and count as skipped. The original
+observation time, window, independent visit ID, and stored vertical offset are
+retained. The configured mounting/installation geometry is assumed unchanged;
+this cannot recover unknown historical installation changes.
+
+Replacement is atomic per chunk. Original evidence stays in `raw_soundings`;
+`sounding_replacements` links each original to its reconstructed successor.
+Only `active_soundings` contributes to the API, statistics, QC and map cells.
+Both old and new cells are rebuilt, removing a vacated old cell. A retry processes
+only originals still active, so interrupted runs can resume without duplicate
+contributions. Already attitude-corrected live observations are not replaced.
+`store.supersededSoundings` reports the retained audit records.
+
+Ordinary `/admin/backfill` now supports the same geometry for empty time ranges.
+It refuses overlap with existing records when attitude correction is enabled;
+use `/admin/rebuild-history` for those ranges. Automatic empty-store backfill is
+available again. The raw journal remains unchanged by either operation.

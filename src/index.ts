@@ -35,7 +35,7 @@ const constructor: PluginConstructor = (app: ServerAPI): Plugin => {
         const loggerVersion = (JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf8')) as { version: string }).version
         const journal = new RawJournal(join(dataDirectory, 'raw-observations.sqlite'), loggerVersion)
         const capture = new CaptureEngine(app, store, config, journal)
-        const history = new HistoryBackfill(app, capture, config)
+        const history = new HistoryBackfill(app, capture, config, store)
         const autoBackfill = new AutoBackfill(app, store, history, config)
         const depthUnits = new DepthUnitPreferences(
           app,
@@ -97,6 +97,7 @@ function stopRuntime(runtime: Runtime): void {
   runtime.csbImporter.stop()
   runtime.depthUnits.stop()
   runtime.autoBackfill.stop()
+  runtime.history.stop()
   runtime.capture.stop()
   runtime.journal.close()
   runtime.store.close()

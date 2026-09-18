@@ -54,7 +54,7 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
       warning: 'Supplemental local estimate only; not for primary navigation.',
       config: publicConfig(runtime.config),
       capture: runtime.capture.status(),
-      history: { running: runtime.history.isRunning() },
+      history: { running: runtime.history.isRunning(), rebuild: runtime.history.rebuildStatus() },
       autoBackfill: runtime.autoBackfill.status(),
       depthDisplayUnits: runtime.depthUnits.status(),
       store: runtime.store.stats()
@@ -386,6 +386,17 @@ export function registerRoutes(router: PluginRouter, getRuntime: () => Runtime |
     }
   })
 
+  router.post('/admin/rebuild-history', (request: Request, response: Response) => {
+    const runtime = requireRuntime(getRuntime, response)
+    if (!runtime) return
+    try {
+      const body = objectBody(request)
+      const from = body.from === undefined ? undefined : bodyTime(body, 'from')
+      const to = body.to === undefined ? undefined : bodyTime(body, 'to')
+      response.status(202).json(runtime.history.startRebuild(from, to))
+    } catch (error) { sendError(response, error) }
+  })
+
   router.post('/admin/reprocess', (_request: Request, response: Response) => {
     const runtime = requireRuntime(getRuntime, response)
     if (!runtime) return
@@ -459,6 +470,9 @@ export function openApi(): object {
       },
       '/admin/backfill': {
         post: operation('Import up to 31 days from Signal K History API')
+      },
+      '/admin/rebuild-history': {
+        post: operation('Reconstruct existing uncorrected soundings from historical GPS and attitude; preserves originals and skips gaps')
       },
       '/admin/reprocess': {
         post: operation('Rebuild QC classifications and surface cells')
