@@ -472,7 +472,21 @@ export function openApi(): object {
         post: operation('Import up to 31 days from Signal K History API')
       },
       '/admin/rebuild-history': {
-        post: operation('Reconstruct existing uncorrected soundings from historical GPS and attitude; preserves originals and skips gaps')
+        post: {
+          summary: 'Reconstruct existing uncorrected soundings from historical GPS and attitude; preserves originals and skips gaps',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: {
+              type: 'object',
+              description: 'Omit both dates to rebuild all eligible soundings.',
+              properties: {
+                from: { type: 'string', format: 'date-time' },
+                to: { type: 'string', format: 'date-time' }
+              }
+            }, example: {} } }
+          },
+          responses: { '202': { description: 'Rebuild started; poll /status for progress' } }
+        }
       },
       '/admin/reprocess': {
         post: operation('Rebuild QC classifications and surface cells')
