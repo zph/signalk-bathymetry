@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
+import { DatabaseSync } from 'node:sqlite'
 import { normalizeConfig } from '../src/config'
 import { cellForPosition, hexCellCenter, mercatorToLonLat } from '../src/geo'
 import { BathymetryStore } from '../src/store'
@@ -183,4 +184,55 @@ test('grid changes remap retained raw evidence and rebuild derived cells', (t) =
   assert.equal(after[0]?.datumDepthM, 6.75)
   assert.equal(store.stats().soundings, 1)
   assert.ok(store.lookupCell(input.latitude, input.longitude, fineConfig.targetDatum))
+})
+
+test('horizontal uncertainty persists and prevents repeated uncertain fixes gaining high cell confidence', t => {
+  const { store, config } = withStore(t)
+  const inputs = Array.from({ length: 12 }, (_, i) => sounding(config, {
+    observedAtMs: Date.UTC(2026, 0, i + 1), passId: `pass-${i}`, depthSource: `source-${i % 2}`,
+    horizontalSigmaM: 20, positionMethod: 'interpolated', geometry: { method: 'uncorrected' }
+  }))
+  store.ingest(inputs)
+  const cell = store.lookupCell(inputs[0]!.latitude, inputs[0]!.longitude, config.targetDatum)!
+  assert.equal(cell.horizontalSigmaM, 20)
+  assert.ok(cell.confidence < 0.05)
+  assert.ok(cell.confidenceReasons?.includes('horizontal_uncertainty_exceeds_cell'))
+  const raw = store.listSoundings({ limit: 1 })[0]!
+  assert.equal(raw.horizontalSigmaM, 20)
+  assert.equal(raw.positionMethod, 'interpolated')
+  store.reprocessAll()
+  assert.equal(store.lookupCell(inputs[0]!.latitude, inputs[0]!.longitude, config.targetDatum)!.horizontalSigmaM, 20)
+})
+
+test('geometry-corrected surface depth is not reconstructed from uncorrected beam range', t => {
+  const { store, config } = withStore(t)
+  const input = sounding(config, { rawDepthM: 10, depthReference: 'belowTransducer', surfaceToTransducerM: 0.5,
+    datumDepthM: 8.16, horizontalSigmaM: 4, geometry: { method: 'beam-center-with-cone-uncertainty' } })
+  store.ingest([input])
+  assert.equal(store.listSoundings({ limit: 1 })[0]!.belowSurfaceDepthM, 9.16)
+})
+
+
+test('migration retains legacy evidence and rebuilds horizontal confidence on reopen', t => {
+  const directory = mkdtempSync(join(process.cwd(), '.signalk-bathymetry-test-'))
+  const path = join(directory, 'legacy.sqlite')
+  const config = normalizeConfig({})
+  let store = new BathymetryStore(path, config)
+  const input = sounding(config)
+  store.ingest([input]); store.close()
+  const db = new DatabaseSync(path)
+  db.exec(`ALTER TABLE raw_soundings DROP COLUMN horizontal_sigma_mm;
+    ALTER TABLE raw_soundings DROP COLUMN position_method;
+    ALTER TABLE raw_soundings DROP COLUMN geometry_json;
+    ALTER TABLE surface_cells DROP COLUMN horizontal_sigma_mm;
+    UPDATE qc_classifications SET model_version=4;
+    UPDATE surface_cells SET model_version=4;
+    PRAGMA user_version=3;`)
+  db.close()
+  store = new BathymetryStore(path, config)
+  t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }) })
+  assert.equal(store.stats().soundings, 1)
+  assert.equal(store.listSoundings({ limit: 1 })[0]!.positionMethod, 'legacy_unaligned')
+  assert.equal(store.listSoundings({ limit: 1 })[0]!.horizontalSigmaM, config.positionSigmaM)
+  assert.equal(store.lookupCell(input.latitude, input.longitude, config.targetDatum)!.horizontalSigmaM, config.positionSigmaM)
 })

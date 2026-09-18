@@ -6,6 +6,7 @@ import {
   bboxToCellRange,
   cellForPosition,
   hexCellMercatorBounds,
+  hexCellCenter,
   hexCellVertices,
   lonLatToMercator,
   mercatorToLonLat
@@ -20,7 +21,7 @@ import type {
   SurfaceCell
 } from './types'
 
-const MODEL_VERSION = 4
+const MODEL_VERSION = 5
 const GRID_VERSION = 'hex-pointy-v1'
 const DAY_MS = 86_400_000
 const AXIAL_NEIGHBORS = [
@@ -38,6 +39,7 @@ interface RawCellRow {
   depth_source: string
   datum_depth_mm: number
   vertical_sigma_mm: number
+  horizontal_sigma_mm: number | null
   observed_at_ms: number
   aggregation_kind: 'point' | 'stationary_window'
   sample_count: number
@@ -90,10 +92,10 @@ export class BathymetryStore {
         tide_method, tide_source, tide_observed_at_ms,
         datum_depth_mm, vertical_sigma_mm, sog_mmps, cog_true_urad, heave_mm,
         input_time_skew_ms, aggregation_kind, sample_count, rejected_sample_count,
-        window_start_ms, window_end_ms
+        window_start_ms, window_end_ms, horizontal_sigma_mm, position_method, geometry_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?
       )
     `)
     this.insertClassification = this.db.prepare(`
@@ -105,7 +107,7 @@ export class BathymetryStore {
         classified_at_ms=excluded.classified_at_ms
     `)
     this.selectRawCell = this.db.prepare(`
-      SELECT id, pass_id, depth_source, datum_depth_mm, vertical_sigma_mm, observed_at_ms,
+      SELECT id, pass_id, depth_source, datum_depth_mm, vertical_sigma_mm, horizontal_sigma_mm, observed_at_ms,
         aggregation_kind, sample_count, rejected_sample_count
       FROM raw_soundings
       WHERE cell_x=? AND cell_y=? AND tide_datum=?
@@ -121,13 +123,14 @@ export class BathymetryStore {
         cell_x, cell_y, datum, model_version, robust_depth_mm, render_depth_mm,
         conservative_depth_mm, vertical_sigma_mm, confidence_base,
         sounding_count, observation_count, pass_count, source_count, oldest_at_ms, newest_at_ms,
-        change_state, updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        change_state, updated_at_ms, horizontal_sigma_mm
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(cell_x, cell_y, datum, model_version) DO UPDATE SET
         robust_depth_mm=excluded.robust_depth_mm,
         render_depth_mm=excluded.render_depth_mm,
         conservative_depth_mm=excluded.conservative_depth_mm,
         vertical_sigma_mm=excluded.vertical_sigma_mm,
+        horizontal_sigma_mm=excluded.horizontal_sigma_mm,
         confidence_base=excluded.confidence_base,
         sounding_count=excluded.sounding_count,
         observation_count=excluded.observation_count,
@@ -293,7 +296,7 @@ export class BathymetryStore {
           r.depth_raw_mm, r.depth_reference, r.depth_source,
           r.surface_to_keel_mm, r.surface_to_transducer_mm,
           r.tide_height_mm, r.tide_datum, r.tide_station_id, r.tide_station_name,
-          r.datum_depth_mm, r.vertical_sigma_mm, r.pass_id,
+          r.datum_depth_mm, r.vertical_sigma_mm, r.horizontal_sigma_mm, r.position_method, r.geometry_json, r.pass_id,
           r.aggregation_kind, r.sample_count, r.rejected_sample_count,
           r.window_start_ms, r.window_end_ms,
           q.qc_state, q.reasons_json
@@ -311,6 +314,9 @@ export class BathymetryStore {
       context: row.context,
       position: { latitude: Number(row.lat_e7) / 1e7, longitude: Number(row.lon_e7) / 1e7 },
       positionSource: row.position_source,
+      horizontalSigmaM: millimetersToOptionalMeters(row.horizontal_sigma_mm) ?? this.config.positionSigmaM,
+      positionMethod: row.position_method,
+      geometry: JSON.parse(String(row.geometry_json)),
       rawDepthM: Number(row.depth_raw_mm) / 1000,
       depthReference: row.depth_reference,
       depthSource: row.depth_source,
@@ -495,6 +501,10 @@ export class BathymetryStore {
         value TEXT NOT NULL
       ) STRICT;
     `)
+    this.ensureColumn('raw_soundings', 'horizontal_sigma_mm', 'INTEGER')
+    this.ensureColumn('raw_soundings', 'position_method', "TEXT NOT NULL DEFAULT 'legacy_unaligned'")
+    this.ensureColumn('raw_soundings', 'geometry_json', "TEXT NOT NULL DEFAULT '{}'")
+    this.ensureColumn('surface_cells', 'horizontal_sigma_mm', 'INTEGER')
     this.ensureColumn('raw_soundings', 'aggregation_kind', "TEXT NOT NULL DEFAULT 'point'")
     this.ensureColumn('raw_soundings', 'sample_count', 'INTEGER NOT NULL DEFAULT 1')
     this.ensureColumn('raw_soundings', 'rejected_sample_count', 'INTEGER NOT NULL DEFAULT 0')
@@ -506,7 +516,7 @@ export class BathymetryStore {
       UPDATE raw_soundings SET window_end_ms=observed_at_ms WHERE window_end_ms=0;
     `)
     this.migrateGridIfNeeded()
-    this.db.exec('PRAGMA user_version=3;')
+    this.db.exec('PRAGMA user_version=4;')
   }
 
   private migrateGridIfNeeded(): void {
@@ -602,7 +612,10 @@ export class BathymetryStore {
       Math.max(1, Math.round(s.sampleCount ?? 1)),
       Math.max(0, Math.round(s.rejectedSampleCount ?? 0)),
       Math.round(s.windowStartMs ?? s.observedAtMs),
-      Math.round(s.windowEndMs ?? s.observedAtMs)
+      Math.round(s.windowEndMs ?? s.observedAtMs),
+      Math.round(validHorizontalSigma(s.horizontalSigmaM, this.config.positionSigmaM) * 1000),
+      s.positionMethod ?? (s.origin === 'history' ? 'history_unaligned' : 'unknown'),
+      JSON.stringify(s.geometry ?? {})
     ]
   }
 
@@ -687,7 +700,15 @@ export class BathymetryStore {
       { value: Math.exp(-withinVisitSigmaM / 0.5), weight: 1 },
       { value: sourceCount >= 2 ? 1 : 0.7, weight: 1 }
     ])
+    // Horizontal error is correlated within a visit and is not reduced by ping count.
+    // Use the largest uncertainty of the evidence controlling the rendered depth.
+    const horizontalSigmaM = Math.max(...uncertaintyRows.map(row =>
+      validHorizontalSigma(row.horizontal_sigma_mm === null ? undefined : row.horizontal_sigma_mm / 1000, this.config.positionSigmaM)))
+    const center = hexCellCenter(cellX, cellY, this.config.baseCellMeters)
+    const latitude = mercatorToLonLat(center.x, center.y).latitude
+    const horizontalCap = horizontalConfidenceCap(horizontalSigmaM, latitude, this.config.baseCellMeters)
     const confidence = Math.min(
+      horizontalCap,
       calculatedConfidence,
       evidenceConfidenceCap(activeRows.length, active.passes.length, sourceCount)
     )
@@ -729,7 +750,8 @@ export class BathymetryStore {
       oldestAtMs,
       newestAtMs,
       changeState,
-      now
+      now,
+      Math.round(horizontalSigmaM * 1000)
     )
   }
 
@@ -740,6 +762,11 @@ export class BathymetryStore {
     const observationCount = Number(row.observation_count)
     const passCount = Number(row.pass_count)
     const sourceCount = Number(row.source_count)
+    const horizontalSigmaM = validHorizontalSigma(row.horizontal_sigma_mm == null ? undefined : Number(row.horizontal_sigma_mm) / 1000, this.config.positionSigmaM)
+    const center = hexCellCenter(Number(row.cell_x), Number(row.cell_y), this.config.baseCellMeters)
+    const groundWidthM = this.config.baseCellMeters * Math.cos(mercatorToLonLat(center.x, center.y).latitude * Math.PI / 180)
+    const confidenceReasons = evidenceConfidenceReasons(observationCount, passCount, sourceCount)
+    if (2 * horizontalSigmaM > groundWidthM) confidenceReasons.push('horizontal_uncertainty_exceeds_cell')
     return {
       cellX: Number(row.cell_x),
       cellY: Number(row.cell_y),
@@ -749,7 +776,8 @@ export class BathymetryStore {
       conservativeDepthM: Number(row.conservative_depth_mm) / 1000,
       verticalSigmaM: Number(row.vertical_sigma_mm) / 1000,
       confidence: Math.min(1, Number(row.confidence_base) * recency),
-      confidenceReasons: evidenceConfidenceReasons(observationCount, passCount, sourceCount),
+      horizontalSigmaM,
+      confidenceReasons,
       soundingCount: Number(row.sounding_count),
       observationCount,
       passCount,
@@ -893,6 +921,10 @@ function millimetersToOptionalMeters(value: unknown): number | undefined {
 }
 
 function belowSurfaceDepth(row: Record<string, unknown>): number | undefined {
+  const geometry = JSON.parse(String(row.geometry_json ?? '{}')) as { method?: string }
+  if (geometry.method === 'beam-center-with-cone-uncertainty' || geometry.method === 'stationary_window') {
+    return (Number(row.datum_depth_mm) + Number(row.tide_height_mm)) / 1000
+  }
   const rawDepthM = Number(row.depth_raw_mm) / 1000
   if (row.depth_reference === 'belowSurface') return rawDepthM
   const offset =
@@ -916,4 +948,14 @@ function parseJsonArray(value: unknown): unknown[] {
   } catch {
     return []
   }
+}
+
+function validHorizontalSigma(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+/** Fitness cap, not a probability: a sub-cell estimate needs sub-cell positioning. */
+function horizontalConfidenceCap(sigmaM: number, latitude: number, cellMeters: number): number {
+  const groundWidthM = cellMeters * Math.cos(latitude * Math.PI / 180)
+  return Math.min(1, (groundWidthM / (2 * sigmaM)) ** 2)
 }

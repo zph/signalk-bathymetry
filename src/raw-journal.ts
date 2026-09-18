@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import type { Attitude } from './geometry'
 import type { DepthReference, Position, TideProjection, TimestampedValue } from './types'
 
 export interface RawObservation {
@@ -15,6 +16,8 @@ export interface RawObservation {
   tide: TideProjection | null
   surfaceOffsetM: number
   installation: Record<string, unknown>
+  attitude?: TimestampedValue<Attitude> | null
+  heading?: TimestampedValue<number> | null
   quality: string[]
 }
 

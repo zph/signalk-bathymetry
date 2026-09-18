@@ -34,6 +34,7 @@ export class HistoryBackfill {
   }
 
   async run(fromMs: number, toMs: number): Promise<{ rows: number; chunks: number }> {
+    if (this.config.attitudeCorrection) throw new Error('History backfill requires synchronized attitude and heading for raw beam range; use the raw journal for geometry reprocessing')
     if (this.running) throw new Error('A history backfill is already running')
     if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
       throw new Error('Backfill requires a valid from time before to time')
@@ -177,6 +178,8 @@ export class HistoryBackfill {
       latitude: position.latitude,
       longitude: position.longitude,
       positionSource: 'history:unknown',
+      horizontalSigmaM: Math.hypot(this.config.positionSigmaM, (sogMps ?? 3) * this.config.historyResolutionSeconds),
+      positionMethod: 'history_unaligned',
       rawDepthM,
       depthReference: reference,
       depthSource: 'history:unknown',

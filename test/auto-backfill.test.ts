@@ -67,3 +67,15 @@ function stats(soundings: number): StoreStats {
     cells: soundings
   }
 }
+
+test('attitude correction disables backfill that lacks synchronized attitude', async () => {
+  const auto = new AutoBackfill(
+    { debug() {}, error() {}, setPluginStatus() {} },
+    { stats: () => stats(0) },
+    { isRunning: () => false, run: async () => { assert.fail('must not import uncorrected ranges'); return { rows: 0, chunks: 0 } } },
+    normalizeConfig({ attitudeCorrection: true })
+  )
+  auto.start(); await auto.runNow()
+  assert.equal(auto.status().state, 'disabled')
+  auto.stop()
+})

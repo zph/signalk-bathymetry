@@ -33,6 +33,13 @@ export interface BathymetryConfig {
   tideStationName: string
   tideMaxAgeSeconds: number
   tideSigmaM: number
+  positionSigmaM: number
+  velocitySigmaMps: number
+  motionMaxAgeSeconds: number
+  attitudeCorrection: boolean
+  attitudeMaxAgeSeconds: number
+  attitudeSigmaDegrees: number
+  beamWidthDegrees: number
   depthSigmaM: number
   offsetSigmaM: number
   maxIntervalSeconds: number
@@ -78,6 +85,9 @@ export interface SoundingInput {
   passId: string
   latitude: number
   longitude: number
+  horizontalSigmaM?: number
+  positionMethod?: string
+  geometry?: Record<string, unknown>
   positionSource: string
   rawDepthM: number
   depthReference: DepthReference
@@ -111,6 +121,7 @@ export interface SurfaceCell {
   robustDepthM: number
   renderDepthM: number
   conservativeDepthM: number
+  horizontalSigmaM?: number
   verticalSigmaM: number
   confidence: number
   confidenceReasons?: string[]
@@ -156,6 +167,8 @@ export interface CaptureStatus {
   running: boolean
   queued: number
   stationarySamples: number
+  withheldPosition?: number
+  withheldGeometry?: number
   lastCaptureMs?: number
   lastError?: string
   latestTide?: TideProjection

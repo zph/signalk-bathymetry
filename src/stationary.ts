@@ -1,3 +1,4 @@
+import { haversineMeters } from './geo'
 import { median, robustSigma } from './statistics'
 import type { BathymetryConfig, SoundingInput } from './types'
 
@@ -30,8 +31,12 @@ export function aggregateStationaryWindow(
   )
   const acceptedSpreadM = robustSigma(accepted.map((sample) => sample.datumDepthM))
   const timeSigmaM = (median(accepted.map((sample) => sample.inputTimeSkewMs)) / 1000) * 0.05
+  const center = { latitude: median(accepted.map(sample => sample.latitude)), longitude: median(accepted.map(sample => sample.longitude)) }
   return {
     ...representative,
+    horizontalSigmaM: Math.hypot(Math.max(...accepted.map(sample => sample.horizontalSigmaM ?? config.positionSigmaM)),
+      Math.max(...accepted.map(sample => haversineMeters(center, sample)))),
+    geometry: { method: 'stationary_window', sampleGeometryMethods: [...new Set(accepted.map(sample => sample.geometry?.method ?? 'uncorrected'))] },
     observedAtMs: windowEndMs,
     ingestedAtMs: Date.now(),
     trackId,
@@ -41,13 +46,14 @@ export function aggregateStationaryWindow(
     rawDepthM: median(accepted.map((sample) => sample.rawDepthM)),
     tideHeightM: median(accepted.map((sample) => sample.tideHeightM)),
     datumDepthM: median(accepted.map((sample) => sample.datumDepthM)),
-    verticalSigmaM: Math.sqrt(
+    verticalSigmaM: Math.sqrt(Math.max(
       config.depthSigmaM ** 2 / effectiveSamples +
         config.offsetSigmaM ** 2 +
         config.tideSigmaM ** 2 +
         acceptedSpreadM ** 2 / effectiveSamples +
-        timeSigmaM ** 2
-    ),
+        timeSigmaM ** 2,
+      ...accepted.filter(sample => sample.geometry?.method === 'beam-center-with-cone-uncertainty').map(sample => sample.verticalSigmaM ** 2)
+    )),
     inputTimeSkewMs: Math.round(median(accepted.map((sample) => sample.inputTimeSkewMs))),
     aggregationKind: 'stationary_window',
     sampleCount: accepted.length,

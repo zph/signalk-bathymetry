@@ -11,6 +11,13 @@ export const DEFAULT_CONFIG: BathymetryConfig = {
   tideStationName: 'Signal K selected station',
   tideMaxAgeSeconds: 900,
   tideSigmaM: 0.25,
+  positionSigmaM: 3,
+  velocitySigmaMps: 0.3,
+  motionMaxAgeSeconds: 2,
+  attitudeCorrection: false,
+  attitudeMaxAgeSeconds: 0.5,
+  attitudeSigmaDegrees: 2,
+  beamWidthDegrees: 20,
   depthSigmaM: 0.2,
   offsetSigmaM: 0.1,
   maxIntervalSeconds: 1,
@@ -53,6 +60,12 @@ export function normalizeConfig(raw: object): BathymetryConfig {
   config.recordingInstallation = input.recordingInstallation && typeof input.recordingInstallation === 'object' && !Array.isArray(input.recordingInstallation)
     ? input.recordingInstallation : {}
 
+  for (const key of ['positionSigmaM', 'velocitySigmaMps', 'motionMaxAgeSeconds',
+    'attitudeMaxAgeSeconds', 'attitudeSigmaDegrees', 'beamWidthDegrees', 'maxLiveTimeSkewSeconds'] as const) {
+    config[key] = positive(config[key], DEFAULT_CONFIG[key])
+  }
+  config.beamWidthDegrees = Math.min(90, config.beamWidthDegrees)
+  config.attitudeCorrection = input.attitudeCorrection === true
   config.targetDatum = nonEmpty(config.targetDatum, DEFAULT_CONFIG.targetDatum).toUpperCase()
   config.positionPath = nonEmpty(config.positionPath, DEFAULT_CONFIG.positionPath)
   config.depthPath = nonEmpty(config.depthPath, DEFAULT_CONFIG.depthPath)
@@ -132,6 +145,12 @@ export function pluginSchema(): object {
           offsetsVerified: { type: 'boolean', title: 'Configured vertical offsets have been measured', default: false },
           antennaToTransducerForwardM: { type: 'number', title: 'GNSS to transducer: forward metres' },
           antennaToTransducerStarboardM: { type: 'number', title: 'GNSS to transducer: starboard metres' },
+          antennaToTransducerDownM: { type: 'number', title: 'GNSS to transducer: down metres' },
+          transducerForwardM: { type: 'number', title: 'Transducer forward of attitude rotation origin (m)' },
+          transducerStarboardM: { type: 'number', title: 'Transducer starboard of attitude rotation origin (m)' },
+          transducerDownM: { type: 'number', title: 'Transducer below attitude rotation origin (m)' },
+          beamMountRollDegrees: { type: 'number', title: 'Beam mounting roll (degrees, starboard down positive)' },
+          beamMountPitchDegrees: { type: 'number', title: 'Beam mounting pitch (degrees, bow up positive)' },
           sounderCorrections: { type: 'string', title: 'Corrections already applied by sounder (or unknown)' },
           notes: { type: 'string', title: 'Installation/calibration notes' }
         }
@@ -180,6 +199,15 @@ export function pluginSchema(): object {
       },
       tideMaxAgeSeconds: numberField('Maximum tide age (seconds)', 1, 86400, 1, 900),
       tideSigmaM: numberField('Tide uncertainty (m, 1 sigma)', 0, 10, 0.01, 0.25),
+      positionSigmaM: numberField('Estimated GNSS uncertainty per horizontal axis (m, 1 sigma)', 0.1, 100, 0.1, 3),
+      velocitySigmaMps: numberField('Velocity uncertainty for position projection (m/s)', 0.01, 10, 0.01, 0.3),
+      motionMaxAgeSeconds: numberField('Maximum speed/course age (seconds)', 0.1, 10, 0.1, 2),
+      attitudeCorrection: { type: 'boolean', default: false,
+        title: 'Correct verified raw beam range using attitude and installation geometry',
+        description: 'Requires belowTransducer raw slant range, fresh roll/pitch and true heading. Assumes a level downward mounting unless mounting angles are provided. Lever-arm and immersion corrections require verified installation offsets. Missing inputs withhold mapped soundings; raw recording continues.' },
+      attitudeMaxAgeSeconds: numberField('Maximum attitude/heading age (seconds)', 0.05, 2, 0.05, 0.5),
+      attitudeSigmaDegrees: numberField('Attitude and mounting angle uncertainty (degrees, 1 sigma)', 0.1, 20, 0.1, 2),
+      beamWidthDegrees: numberField('Full sounder beam width (degrees; estimated until verified)', 1, 90, 1, 20),
       depthSigmaM: numberField('Depth sensor uncertainty (m, 1 sigma)', 0, 10, 0.01, 0.2),
       offsetSigmaM: numberField('Vertical offset uncertainty (m, 1 sigma)', 0, 10, 0.01, 0.1),
       maxIntervalSeconds: numberField('Maximum sampling interval (s)', 0.1, 60, 0.1, 1),

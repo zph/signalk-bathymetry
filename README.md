@@ -63,6 +63,9 @@ For a development installation, point Signal K at this package using the
 server's normal local-plugin workflow, enable **Local Bathymetry**, then set the
 measured vessel offsets and tide datum before recording.
 
+See [position alignment and attitude geometry](docs/POSITION_AND_ATTITUDE.md) for
+timestamp handling, horizontal confidence, beam correction, and installation requirements.
+
 ## Important configuration
 
 - `depthPath` and optional `depthSource`: the authoritative sounder input. New installations default

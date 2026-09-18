@@ -29,14 +29,14 @@ export class AutoBackfill {
     private readonly config: BathymetryConfig
   ) {
     this.current = {
-      state: config.autoBackfillWhenEmpty ? 'not_needed' : 'disabled',
+      state: config.autoBackfillWhenEmpty && !config.attitudeCorrection ? 'not_needed' : 'disabled',
       attempts: 0,
       lookbackDays: config.autoBackfillDays
     }
   }
 
   start(): void {
-    if (!this.config.autoBackfillWhenEmpty) {
+    if (!this.config.autoBackfillWhenEmpty || this.config.attitudeCorrection) {
       this.current = { ...this.current, state: 'disabled' }
       return
     }
@@ -58,7 +58,7 @@ export class AutoBackfill {
   }
 
   async runNow(): Promise<void> {
-    if (this.stopped || !this.config.autoBackfillWhenEmpty) return
+    if (this.stopped || !this.config.autoBackfillWhenEmpty || this.config.attitudeCorrection) return
     if (this.store.stats().soundings > 0) {
       this.current = withoutNextAttempt({ ...this.current, state: 'not_needed' })
       return

@@ -207,6 +207,7 @@ function cellFeature(
     BATHY_LABEL_UNIT: units.symbol,
     BATHY_SAFETY_THRESHOLD_M: config.surfaceToKeelM + config.dangerUnderKeelM,
   }
+  if (cell.horizontalSigmaM !== undefined) properties.BATHY_HORIZONTAL_SIGMA_M = cell.horizontalSigmaM
   if (cell.confidenceReasons?.length) {
     properties.BATHY_CONFIDENCE_REASONS = cell.confidenceReasons.join('|')
   }
